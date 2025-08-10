@@ -1,0 +1,27 @@
+# Add this to your configuration.yaml to fix the database size issue
+
+# Option 1: Completely exclude the entity from database storage
+recorder:
+  exclude:
+    entities:
+      - remote.29_162275  # Exclude the ramses_cc remote from database storage
+
+# Option 2: Exclude all ramses_cc remote entities
+# recorder:
+#   exclude:
+#     entity_globs:
+#       - "remote.*_ramses_*"
+
+# Option 3: Keep entity but exclude specific large attributes
+# recorder:
+#   exclude:
+#     entity_globs:
+#       - "remote.29_162275"
+#   include:
+#     entities:
+#       - "remote.29_162275"
+#   exclude_attributes:
+#     "remote.29_162275":
+#       - commands  # Example: exclude 'commands' attribute if it's large
+#       - history   # Example: exclude 'history' attribute if it's large
+#       - packets   # Example: exclude packet data if stored

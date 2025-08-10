@@ -1,0 +1,186 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Fan Settings",
+        "description": "Configure your ventilation fan hardware settings",
+        "data": {
+          "min_fan_output": "Minimum Fan Output",
+          "max_fan_output": "Maximum Fan Output",
+          "entity_id": "Fan Control Entity"
+        },
+        "data_description": {
+          "min_fan_output": "Minimum fan speed value (0-254)",
+          "max_fan_output": "Maximum fan speed value (1-255)",
+          "entity_id": "The ramses_cc remote entity to control the fan"
+        }
+      },
+      "pid_parameters": {
+        "title": "PID Parameters",
+        "description": "Configure your PID controller algorithm settings",
+        "data": {
+          "setpoint": "Air Quality Setpoint",
+          "kp": "Proportional Gain (Kp)",
+          "ki_times": "Integral Gain (Ki)",
+          "update_interval": "Update Interval (seconds)",
+          "back": "Back"
+        },
+        "data_description": {
+          "setpoint": "Target air quality index (0.0 = excellent air, 5.0 = very poor air)",
+          "kp": "How aggressively the system responds to air quality changes (0.1-1000)",
+          "ki_times": "How fast the error is integrated. 3600 means it takes approximately 1 hour for the fan to reach 100%.",
+          "update_interval": "How often to check sensors and adjust the fan (10-3600 seconds)"
+        }
+      },
+      "sensor_types": {
+        "title": "Sensor Types",
+        "description": "Select which types of air quality sensors you want to use",
+        "data": {
+          "use_co2_sensors": "Use CO2 Sensors",
+          "use_voc_sensors": "Use VOC Sensors",
+          "use_pm_sensors": "Use PM Sensors",
+          "back": "Back"
+        },
+        "data_description": {
+          "use_co2_sensors": "Carbon Dioxide sensors (ppm) - Primary air quality indicator",
+          "use_voc_sensors": "Volatile Organic Compounds sensors (ppb) - Chemical pollutants",
+          "use_pm_sensors": "Particulate Matter sensors (µg/m³) - Dust and particles"
+        }
+      },
+      "air_quality_indices": {
+        "title": "Air Quality Indices",
+        "description": "Configure air quality index thresholds for automatic sensor weighting",
+        "data": {
+          "co2_index": "CO2 Index Thresholds (ppm)",
+          "voc_index": "VOC Index Thresholds (ppb)",
+          "pm_1_0_index": "PM1.0 Index Thresholds (µg/m³)",
+          "pm_2_5_index": "PM2.5 Index Thresholds (µg/m³)",
+          "pm_10_index": "PM10 Index Thresholds (µg/m³)",
+          "voc_ppm_index": "VOC Parts Index Thresholds",
+          "back": "Back"
+        },
+        "data_description": {
+          "co2_index": "Six comma-separated CO2 thresholds in ppm for air quality indices 0-5",
+          "voc_index": "Six comma-separated VOC thresholds for 'volatile_organic_compounds' sensors (indices 0-5)",
+          "voc_ppm_index": "Six comma-separated VOC thresholds for 'volatile_organic_compounds_parts' sensors (indices 0-5)",
+          "pm_1_0_index": "Six comma-separated PM1.0 thresholds in µg/m³ for air quality indices 0-5",
+          "pm_2_5_index": "Six comma-separated PM2.5 thresholds in µg/m³ for air quality indices 0-5",
+          "pm_10_index": "Five comma-separated PM10 thresholds in µg/m³ for air quality indices 1-5"
+        }
+      },
+      "co2_sensors": {
+        "title": "CO2 Sensors",
+        "description": "Select one or more CO2 sensors. You can select multiple sensors by holding Ctrl/Cmd while clicking.",
+        "data": {
+          "co2_sensors": "CO2 Sensor Entities",
+          "back": "Back"
+        },
+        "data_description": {
+          "co2_sensors": "Select one or more CO2 sensor entities (select at least one, can select multiple)"
+        }
+      },
+      "voc_sensors": {
+        "title": "VOC Sensors",
+        "description": "Select one or more VOC sensors. You can select multiple sensors by holding Ctrl/Cmd while clicking.",
+        "data": {
+          "voc_sensors": "VOC Sensor Entities",
+          "back": "Back"
+        },
+        "data_description": {
+          "voc_sensors": "Select one or more VOC sensor entities (select at least one, can select multiple)"
+        }
+      },
+      "pm_sensors": {
+        "title": "PM Sensors",
+        "description": "Select one or more Particulate Matter sensors. You can select multiple sensors by holding Ctrl/Cmd while clicking.",
+        "data": {
+          "pm_sensors": "PM Sensor Entities",
+          "back": "Back"
+        },
+        "data_description": {
+          "pm_sensors": "Select one or more PM sensor entities - PM1, PM2.5, or PM10 (select at least one, can select multiple)"
+        }
+      },
+      "advanced": {
+        "title": "Advanced Settings",
+        "description": "Configure advanced PID controller timing parameters for each air quality level",
+        "data": {
+          "ki_times": "Ki Time Constants",
+          "back": "Back"
+        },
+        "data_description": {
+          "ki_times": "Six comma-separated Ki time constants for each air quality level (60-7200 seconds each). Format: level0,level1,level2,level3,level4,level5 (e.g., 3600,1800,900,450,225,150)"
+        }
+      }
+    },
+    "error": {
+      "already_configured": "PID Ventilation is already configured",
+      "cannot_connect": "Failed to connect to sensor",
+      "invalid_entity": "Invalid entity ID",
+      "invalid_range": "Value is outside the valid range",
+      "invalid_sensor": "Invalid sensor selection",
+      "no_sensor_types": "At least one sensor type must be selected",
+      "no_sensors": "At least one sensor must be selected",
+      "unknown": "Unexpected error occurred",
+      "invalid_threshold": "Invalid threshold values",
+      "invalid_air_quality_index": "Invalid air quality index format",
+      "invalid_ki_times": "Invalid Ki times format"
+    },
+    "abort": {
+      "already_configured": "PID Ventilation is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "description": "Choose which settings to configure",
+        "menu_options": {
+          "fan_settings": "Fan settings",
+          "sensor_settings": "Sensor settings",
+          "iaq_settings": "IAQ settings",
+          "pid_settings": "PID settings"
+        }
+      },
+      "fan_settings": {
+        "title": "Fan settings",
+        "data": {
+          "min_fan_output": "Minimum Fan Output",
+          "max_fan_output": "Maximum Fan Output",
+          "entity_id": "Fan Control Entity"
+        }
+      },
+      "sensor_settings": {
+        "title": "Sensor settings",
+        "data": {
+          "use_co2_sensors": "Use CO2 Sensors",
+          "use_voc_sensors": "Use VOC Sensors",
+          "use_pm_sensors": "Use PM Sensors",
+          "co2_sensors": "CO2 Sensor Entities",
+          "voc_sensors": "VOC Sensor Entities",
+          "pm_sensors": "PM Sensor Entities"
+        }
+      },
+      "iaq_settings": {
+        "title": "IAQ settings",
+        "data": {
+          "co2_index": "CO2 Index Thresholds (ppm)",
+          "voc_index": "VOC Index Thresholds (ppb)",
+          "voc_ppm_index": "VOC Parts Index Thresholds",
+          "pm_1_0_index": "PM1.0 Index Thresholds (µg/m³)",
+          "pm_2_5_index": "PM2.5 Index Thresholds (µg/m³)",
+          "pm_10_index": "PM10 Index Thresholds (µg/m³)"
+        }
+      },
+      "pid_settings": {
+        "title": "PID settings",
+        "data": {
+          "setpoint": "Air Quality Setpoint",
+          "kp": "Proportional Gain (Kp)",
+          "ki_times": "Integral Gain (Ki)",
+          "update_interval": "Update Interval (seconds)"
+        }
+      }
+    }
+  }
+}
