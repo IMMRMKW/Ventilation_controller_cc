@@ -42,3 +42,28 @@ secrets.yml
 __pycache__/
 .esphome/
 .venv/
+
+# Development and analysis files
+all_hex_codes_31E0.txt
+Config_flow.pdf
+config_flow.txt
+createLines.py
+findLines.py
+generate_all_hex_codes.py
+lines_with_32_146231.txt
+lines_with_32_146231_sorted.txt
+logfile.txt
+logfile_from_31E0.txt
+logfile_from_31E0_nodupes.txt
+logfile_from_31E0_sorted.txt
+logfile_medium_format.txt
+matching.py
+matching.txt
+simulation.py
+sortFancommands.py
+sort_by_timestamp.py
+
+# Configuration files (optional - uncomment if you want to ignore these)
+# configuration_example.yaml
+# recorder_config_example.yaml
+# ventilation.yaml

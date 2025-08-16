@@ -30,8 +30,11 @@ def get_basic_schema():
     return vol.Schema({
         vol.Required("min_fan_output", default=0): vol.Coerce(int),
         vol.Required("max_fan_output", default=255): vol.Coerce(int),
-        vol.Required("entity_id", default="remote.29_162275"): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="remote")
+        vol.Required("remote_device"): selector.DeviceSelector(
+            selector.DeviceSelectorConfig(integration="ramses_rf")
+        ),
+        vol.Required("fan_device"): selector.DeviceSelector(
+            selector.DeviceSelectorConfig(integration="ramses_rf")
         ),
     }, extra=vol.ALLOW_EXTRA)
 
@@ -156,10 +159,9 @@ async def validate_basic_input(hass: HomeAssistant, data: dict[str, Any]) -> dic
     if data["min_fan_output"] >= data["max_fan_output"]:
         raise InvalidRange("Minimum fan output must be less than maximum fan output")
     
-    # Validate entity_id format (don't check if it exists - it might not be set up yet)
-    entity_id = data["entity_id"]
-    if not entity_id or "." not in entity_id:
-        raise InvalidEntity("Entity ID must be in format 'domain.entity_name'")
+    # Validate remote_device is provided
+    if not data.get("remote_device"):
+        raise InvalidEntity("Remote device must be selected")
 
     return {"title": "PID Ventilation Control"}
 
@@ -258,10 +260,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     if not all_sensors:
         raise InvalidSensor("At least one sensor must be specified")
     
-    # Validate entity_id format (don't check if it exists - it might not be set up yet)
-    entity_id = data["entity_id"]
-    if not entity_id or "." not in entity_id:
-        raise InvalidEntity("Entity ID must be in format 'domain.entity_name'")
+    # Validate remote_device is provided
+    if not data.get("remote_device"):
+        raise InvalidEntity("Remote device must be selected")
     
     # Validate min < max fan output
     if data["min_fan_output"] >= data["max_fan_output"]:
@@ -833,8 +834,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return vol.Schema({
             vol.Required("min_fan_output", default=cur.get("min_fan_output", 0)): vol.Coerce(int),
             vol.Required("max_fan_output", default=cur.get("max_fan_output", 255)): vol.Coerce(int),
-            vol.Required("entity_id", default=cur.get("entity_id", "remote.29_162275")): selector.EntitySelector(
-                selector.EntitySelectorConfig(domain="remote")
+            vol.Required("remote_device", default=cur.get("remote_device")): selector.DeviceSelector(
+                selector.DeviceSelectorConfig(integration="ramses_rf")
+            ),
+            vol.Optional("fan_device", default=cur.get("fan_device")): selector.DeviceSelector(
+                selector.DeviceSelectorConfig(integration="ramses_rf")
             ),
         }, extra=vol.ALLOW_EXTRA)
 
@@ -844,9 +848,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             try:
                 await validate_basic_input(self.hass, user_input)
                 self._data.update(user_input)
-                return self.async_create_entry(title="", data=self._data)
+                return self.async_create_entry(title="", data={}, options=self._data)
             except InvalidEntity:
-                errors["entity_id"] = "invalid_entity"
+                errors["remote_device"] = "invalid_entity"
             except InvalidRange:
                 errors["min_fan_output"] = "invalid_range"
             except Exception:
@@ -893,7 +897,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     raise InvalidSensor("At least one VOC sensor must be specified")
                 if self._data.get("use_pm_sensors") and not self._data.get("pm_sensors"):
                     raise InvalidSensor("At least one PM sensor must be specified")
-                return self.async_create_entry(title="", data=self._data)
+                return self.async_create_entry(title="", data={}, options=self._data)
             except InvalidSensor:
                 errors["base"] = "no_sensors"
             except Exception:
@@ -927,7 +931,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 ):
                     if key in user_input:
                         self._data[key] = validate_air_quality_index(user_input[key], name)
-                return self.async_create_entry(title="", data=self._data)
+                return self.async_create_entry(title="", data={}, options=self._data)
             except InvalidAirQualityIndex:
                 errors["base"] = "invalid_air_quality_index"
             except Exception:
@@ -955,7 +959,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     "update_interval": user_input["update_interval"],
                     "ki_times": validate_ki_times(user_input["ki_times"]),
                 })
-                return self.async_create_entry(title="", data=self._data)
+                return self.async_create_entry(title="", data={}, options=self._data)
             except InvalidRange:
                 errors["base"] = "invalid_range"
             except InvalidKiTimes:

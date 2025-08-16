@@ -7,12 +7,14 @@
         "data": {
           "min_fan_output": "Minimum Fan Output",
           "max_fan_output": "Maximum Fan Output",
-          "entity_id": "Fan Control Entity"
+          "remote_device": "Select your remote control device",
+          "fan_device": "Select your fan"
         },
         "data_description": {
           "min_fan_output": "Minimum fan speed value (0-254)",
           "max_fan_output": "Maximum fan speed value (1-255)",
-          "entity_id": "The ramses_cc remote entity to control the fan"
+          "remote_device": "The ramses_cc remote device to control the fan",
+          "fan_device": "The physical fan device to control"
         }
       },
       "pid_parameters": {
@@ -147,7 +149,8 @@
         "data": {
           "min_fan_output": "Minimum Fan Output",
           "max_fan_output": "Maximum Fan Output",
-          "entity_id": "Fan Control Entity"
+          "remote_device": "Select your remote control device",
+          "fan_device": "Select your fan"
         }
       },
       "sensor_settings": {
