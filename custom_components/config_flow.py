@@ -835,10 +835,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             vol.Required("min_fan_output", default=cur.get("min_fan_output", 0)): vol.Coerce(int),
             vol.Required("max_fan_output", default=cur.get("max_fan_output", 255)): vol.Coerce(int),
             vol.Required("remote_device", default=cur.get("remote_device")): selector.DeviceSelector(
-                selector.DeviceSelectorConfig(integration="ramses_rf")
+                selector.DeviceSelectorConfig(integration="ramses_cc")
             ),
             vol.Optional("fan_device", default=cur.get("fan_device")): selector.DeviceSelector(
-                selector.DeviceSelectorConfig(integration="ramses_rf")
+                selector.DeviceSelectorConfig(integration="ramses_cc")
             ),
         }, extra=vol.ALLOW_EXTRA)
 
