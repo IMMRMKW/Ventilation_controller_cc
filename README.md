@@ -1,5 +1,18 @@
 # Ventilation Controller CC
 
+<style>
+.responsive-img {
+  width: 20%;
+  height: auto;
+}
+
+@media screen and (max-width: 768px) {
+  .responsive-img {
+    width: 90%;
+  }
+}
+</style>
+
 A custom Home Assistant component that automatically controls your Ramses RF ventilation unit based on real-time air quality measurements. The controller uses air quality sensors to calculate an index from 0 (excellent) to 5 (very poor) and adjusts fan speed accordingly.
 
 ## How to Use
@@ -13,7 +26,7 @@ Add the integration commands to your Ramses CC schema:
    - Replace them with your remote and ventilation unit serial numbers
 3. Copy all commands and paste them into the "commands" section of your remote in Ramses CC's "known devices" section
 
-<img src="images/schema.png" alt="Ramses CC Schema Configuration" width="20%">
+<img src="images/schema.png" alt="Ramses CC Schema Configuration" class="responsive-img">
 
 ### Step 2: Install the Integration
 
@@ -45,19 +58,19 @@ Add the integration commands to your Ramses CC schema:
 
 Set the minimum and maximum fan output values. Use a lower maximum value if full power (255) is too loud.
 
-<img src="images/fan_settings.png" alt="Fan settings" width="20%">
+<img src="images/fan_settings.png" alt="Fan settings" class="responsive-img">
 
 #### Sensor Types
 
 Select which types of air quality sensors you want to use. Toggle "back" and submit to return to the previous step.
 
-<img src="images/sensor_types.png" alt="Sensor types" width="20%">
+<img src="images/sensor_types.png" alt="Sensor types" class="responsive-img">
 
 #### Sensor Selection
 
 Choose the specific sensor entities for each selected sensor type.
 
-<img src="images/co2_sensors.png" alt="CO2 sensor selection" width="20%">
+<img src="images/co2_sensors.png" alt="CO2 sensor selection" class="responsive-img">
 
 #### Air Quality Index Configuration
 
@@ -71,7 +84,7 @@ For example, CO2 values:
 
 The default values are based on health guidelines and should work well for most setups. You can adjust them later if needed.
 
-<img src="images/air_quality_indices.png" alt="Air quality index thresholds" width="20%">
+<img src="images/air_quality_indices.png" alt="Air quality index thresholds" class="responsive-img">
 
 #### PID Controller Settings
 
@@ -84,4 +97,4 @@ Configure the control algorithm parameters:
 
 Note: Many ventilation systems only adjust every 10 minutes, so very short intervals may not improve responsiveness.
 
-<img src="images/pid_parameters.png" alt="PID controller parameters" width="20%">
+<img src="images/pid_parameters.png" alt="PID controller parameters" class="responsive-img">
