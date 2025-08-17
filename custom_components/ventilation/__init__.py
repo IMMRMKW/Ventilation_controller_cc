@@ -41,7 +41,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SWITCH, Platform.SENSOR]
+PLATFORMS = [Platform.SWITCH, Platform.SENSOR, Platform.NUMBER]
 
 # Helper to read sensor state with fallback to previous known good value
 def _read_value(hass: HomeAssistant, entity_id: str, previous_values: dict[str, float], fallback: float) -> float:
@@ -151,44 +151,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     remote_entity_id = None
     remote_serial_number = None
     if remote_device_id:
-        device_registry = dr.async_get(hass)
-        remote_device = device_registry.async_get(remote_device_id)
-        if remote_device:
-            # Extract serial number from device identifiers
-            for domain, identifier in remote_device.identifiers:
-                if isinstance(identifier, str) and len(identifier) > 6:
-                    remote_serial_number = identifier
-                    break
-            
-            # Find remote entity from this device
-            entity_registry = er.async_get(hass)
-            entities = er.async_entries_for_device(entity_registry, remote_device_id)
-            
-            # Look for a remote entity
-            for entity in entities:
-                if entity.domain == "remote":
-                    remote_entity_id = entity.entity_id
-                    break
-                    
-            _LOGGER.info(f"Remote device found: {remote_device.name}, Entity: {remote_entity_id}, Serial: {remote_serial_number}")
-        else:
-            _LOGGER.warning(f"Remote device with ID {remote_device_id} not found")
+        try:
+            device_registry = dr.async_get(hass)
+            remote_device = device_registry.async_get(remote_device_id)
+            if remote_device:
+                # Extract serial number from device identifiers
+                for domain, identifier in remote_device.identifiers:
+                    if isinstance(identifier, str) and len(identifier) > 6:
+                        remote_serial_number = identifier
+                        break
+                
+                # Find remote entity from this device
+                entity_registry = er.async_get(hass)
+                entities = er.async_entries_for_device(entity_registry, remote_device_id)
+                
+                # Look for a remote entity
+                for entity in entities:
+                    if entity.domain == "remote":
+                        remote_entity_id = entity.entity_id
+                        break
+                        
+                _LOGGER.info(f"Remote device found: {remote_device.name}, Entity: {remote_entity_id}, Serial: {remote_serial_number}")
+            else:
+                _LOGGER.warning(f"Remote device with ID {remote_device_id} not found")
+        except Exception as e:
+            _LOGGER.error(f"Error accessing remote device {remote_device_id}: {e}", exc_info=True)
+            return False
     
     # Get fan device and extract serial number if device is selected
     fan_serial_number = None
     if fan_device_id:
-        device_registry = dr.async_get(hass)
-        fan_device = device_registry.async_get(fan_device_id)
-        if fan_device:
-            # Extract serial number from device identifiers
-            for domain, identifier in fan_device.identifiers:
-                if isinstance(identifier, str) and len(identifier) > 6:
-                    # Assume the identifier is or contains the serial number
-                    fan_serial_number = identifier
-                    break
-            _LOGGER.info(f"Fan device found: {fan_device.name}, Serial: {fan_serial_number}")
-        else:
-            _LOGGER.warning(f"Fan device with ID {fan_device_id} not found")
+        try:
+            device_registry = dr.async_get(hass)
+            fan_device = device_registry.async_get(fan_device_id)
+            if fan_device:
+                # Extract serial number from device identifiers
+                for domain, identifier in fan_device.identifiers:
+                    if isinstance(identifier, str) and len(identifier) > 6:
+                        # Assume the identifier is or contains the serial number
+                        fan_serial_number = identifier
+                        break
+                _LOGGER.info(f"Fan device found: {fan_device.name}, Serial: {fan_serial_number}")
+            else:
+                _LOGGER.warning(f"Fan device with ID {fan_device_id} not found")
+        except Exception as e:
+            _LOGGER.error(f"Error accessing fan device {fan_device_id}: {e}", exc_info=True)
     
     # Indices (use defaults if not provided)
     co2_index = cfg.get(CONF_CO2_INDEX, DEFAULT_CO2_INDEX)
@@ -238,6 +245,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Reset time baseline to avoid integral spike when re-enabled
             entry_data["last_execution_time"] = datetime.now()
             return
+        
+        # Get current setpoint (may have been updated via number entity)
+        runtime_setpoint = entry_data.get("current_setpoint")
+        if runtime_setpoint is not None:
+            current_setpoint = runtime_setpoint
+        else:
+            current_cfg = {**entry.data, **entry.options}
+            current_setpoint = current_cfg.get(CONF_SETPOINT, setpoint)
          
         # Calculate time difference since last execution
         current_time = datetime.now()
@@ -286,7 +301,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         idx = min(int(round(air_quality_index)), len(Ki) - 1)
         Ki_index_based = Ki[idx]
-        error       = air_quality_index - setpoint
+        error       = air_quality_index - current_setpoint
         integral   += error * Ki_index_based * time_diff
         prev_error  = error
 
@@ -385,14 +400,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             pass
 
         _LOGGER.info(
-            f"PID: Worst={worst_entity} (dc={worst_dc}, val={worst_value}), AQI={air_quality_index:.2f}, Error={error:.2f}, Fan={rate}%, Integral={integral:.2f}"
+            f"PID: Worst={worst_entity} (dc={worst_dc}, val={worst_value}), AQI={air_quality_index:.2f}, Setpoint={current_setpoint:.2f}, Error={error:.2f}, Fan={rate}%, Integral={integral:.2f}"
         )
 
     # Store the remove callback and runtime state in hass.data for cleanup and control
     remove_listener = async_track_time_interval(hass, pid_control, timedelta(seconds=update_interval))
     
-    # Add options update listener
-    entry.add_update_listener(async_reload_entry)
+    # Add options update listener with delayed reload to prevent hanging
+    entry.add_update_listener(async_delayed_reload_entry)
     
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
@@ -411,36 +426,229 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "fan_serial_number": fan_serial_number,
         "learned_commands": set(),  # Track which rate commands have been learned
         "last_execution_time": None,  # Instance-specific last execution time
+        "current_setpoint": setpoint,  # Initialize with config setpoint
     }
 
     # Ensure switch platform is set up after state exists
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        _LOGGER.info(f"Successfully set up platforms: {PLATFORMS}")
+    except Exception as e:
+        _LOGGER.error(f"Error setting up platforms: {e}", exc_info=True)
+        # Clean up partial setup
+        await async_unload_entry(hass, entry)
+        return False
  
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
-    # Unload platforms
-    await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-
-    # Clean up timer
-    data = hass.data[DOMAIN].pop(entry.entry_id, None)
-    if isinstance(data, dict):
-        remove_listener = data.get("remove_listener")
-        if remove_listener:
-            remove_listener()
-
-    if not hass.data[DOMAIN]:
-        hass.data.pop(DOMAIN)
+    """Unload a config entry with improved error handling."""
+    _LOGGER.debug(f"Starting unload for config entry {entry.entry_id}")
     
-    return True
+    unload_ok = True
+    try:
+        # Clean up timer and data first to stop the PID controller
+        _LOGGER.debug("Cleaning up data...")
+        try:
+            domain_data = hass.data.get(DOMAIN, {})
+            entry_data = domain_data.get(entry.entry_id, {})
+            
+            if isinstance(entry_data, dict):
+                remove_listener = entry_data.get("remove_listener")
+                if remove_listener:
+                    try:
+                        remove_listener()
+                        _LOGGER.debug("Successfully removed timer listener")
+                    except Exception as e:
+                        _LOGGER.warning(f"Error removing timer listener: {e}")
+
+            # Remove entry data but keep domain data for other entries
+            domain_data.pop(entry.entry_id, None)
+            
+            # Clean up domain data if empty
+            if not domain_data:
+                hass.data.pop(DOMAIN, None)
+                
+        except Exception as e:
+            _LOGGER.error(f"Error cleaning up data: {e}")
+            unload_ok = False
+
+        # Unload platforms with individual error handling
+        _LOGGER.debug("Unloading platforms...")
+        try:
+            unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+            if not unload_ok:
+                _LOGGER.warning(f"Some platforms failed to unload for entry {entry.entry_id}")
+        except ValueError as ve:
+            if "never loaded" in str(ve):
+                _LOGGER.debug(f"Platforms were not loaded, skipping unload: {ve}")
+                unload_ok = True  # This is OK - nothing to unload
+            else:
+                _LOGGER.error(f"ValueError unloading platforms: {ve}")
+                unload_ok = False
+        except Exception as e:
+            _LOGGER.error(f"Error unloading platforms: {e}")
+            unload_ok = False
+        
+        _LOGGER.debug(f"Unload completed for config entry {entry.entry_id} - Success: {unload_ok}")
+        return unload_ok
+        
+    except Exception as e:
+        _LOGGER.error(f"Unexpected error during unload of {entry.entry_id}: {e}", exc_info=True)
+        return False
+
+
+async def async_delayed_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Schedule a delayed reload to prevent hanging during options flow."""
+    _LOGGER.info(f"Scheduling delayed reload for config entry {entry.entry_id}")
+    
+    # Use call_later to delay the reload and prevent blocking the options flow
+    def schedule_reload():
+        hass.async_create_task(async_reload_entry_safe(hass, entry))
+    
+    # Schedule reload after 2 seconds to allow options flow to complete
+    hass.loop.call_later(2.0, schedule_reload)
+
+
+async def async_reload_entry_safe(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Safe reload that won't hang the UI."""
+    _LOGGER.info(f"Starting safe reload for config entry {entry.entry_id}")
+    
+    # Add a flag to prevent reload loops
+    if hasattr(entry, "_reloading"):
+        _LOGGER.warning("Already reloading entry, skipping to prevent loop")
+        return
+    
+    try:
+        entry._reloading = True
+        
+        # Preserve runtime setpoint during reload
+        domain_data = hass.data.get(DOMAIN, {})
+        entry_data = domain_data.get(entry.entry_id, {})
+        preserved_setpoint = entry_data.get("current_setpoint")
+        
+        _LOGGER.debug(f"Safe reload - Options: {len(entry.options)} items, Entry data: {len(entry.data)} items")
+        
+        # Unload first
+        try:
+            _LOGGER.debug("Unloading platforms safely...")
+            unload_success = await async_unload_entry(hass, entry)
+            if unload_success:
+                _LOGGER.debug("Platforms unloaded successfully")
+            else:
+                _LOGGER.warning("Some platforms failed to unload, continuing with setup")
+        except Exception as unload_error:
+            _LOGGER.warning(f"Error during safe unload: {unload_error}")
+        
+        # Small delay to ensure cleanup completes
+        import asyncio
+        await asyncio.sleep(0.5)
+        
+        # Setup again
+        try:
+            _LOGGER.debug("Setting up platforms safely...")
+            setup_success = await async_setup_entry(hass, entry)
+            
+            if not setup_success:
+                _LOGGER.error("Safe setup returned False")
+                return
+                
+            _LOGGER.debug("Platforms set up successfully")
+        except Exception as setup_error:
+            _LOGGER.error(f"Error during safe setup: {setup_error}")
+            return
+        
+        # Restore runtime setpoint after reload
+        if preserved_setpoint is not None:
+            domain_data = hass.data.get(DOMAIN, {})
+            entry_data = domain_data.get(entry.entry_id, {})
+            if isinstance(entry_data, dict):
+                entry_data["current_setpoint"] = preserved_setpoint
+                _LOGGER.debug(f"Restored runtime setpoint: {preserved_setpoint}")
+        
+        _LOGGER.info(f"Successfully completed safe reload for config entry {entry.entry_id}")
+        
+    except Exception as e:
+        _LOGGER.error(f"Error in safe reload for {entry.entry_id}: {e}", exc_info=True)
+    finally:
+        # Always remove reload flag
+        if hasattr(entry, "_reloading"):
+            delattr(entry, "_reloading")
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload config entry."""
-    await async_unload_entry(hass, entry)
-    await async_setup_entry(hass, entry)
+    """Reload config entry with improved error handling."""
+    _LOGGER.info(f"Reloading config entry {entry.entry_id}")
+    
+    # Add a flag to prevent reload loops and add timeout
+    if hasattr(entry, "_reloading"):
+        _LOGGER.warning("Already reloading entry, skipping to prevent loop")
+        return
+    
+    try:
+        entry._reloading = True
+        
+        # Preserve runtime setpoint during reload
+        domain_data = hass.data.get(DOMAIN, {})
+        entry_data = domain_data.get(entry.entry_id, {})
+        preserved_setpoint = entry_data.get("current_setpoint")
+        
+        _LOGGER.debug(f"Starting reload - Options: {len(entry.options)} items, Entry data: {len(entry.data)} items")
+        
+        # First, try to unload cleanly with timeout
+        try:
+            _LOGGER.debug("Unloading platforms...")
+            await hass.async_create_task(
+                async_unload_entry(hass, entry),
+                name=f"unload_{entry.entry_id}"
+            )
+            _LOGGER.debug("Platforms unloaded successfully")
+        except Exception as unload_error:
+            _LOGGER.warning(f"Error during unload: {unload_error}")
+            # Continue with setup even if unload failed
+        
+        # Then setup with timeout  
+        try:
+            _LOGGER.debug("Setting up platforms...")
+            setup_success = await hass.async_create_task(
+                async_setup_entry(hass, entry),
+                name=f"setup_{entry.entry_id}"
+            )
+            
+            if not setup_success:
+                raise Exception("Setup returned False")
+                
+            _LOGGER.debug("Platforms set up successfully")
+        except Exception as setup_error:
+            _LOGGER.error(f"Error during setup: {setup_error}")
+            raise
+        
+        # Restore runtime setpoint after reload
+        if preserved_setpoint is not None:
+            domain_data = hass.data.get(DOMAIN, {})
+            entry_data = domain_data.get(entry.entry_id, {})
+            if isinstance(entry_data, dict):
+                entry_data["current_setpoint"] = preserved_setpoint
+                _LOGGER.debug(f"Restored runtime setpoint: {preserved_setpoint}")
+        
+        _LOGGER.info(f"Successfully reloaded config entry {entry.entry_id}")
+        
+    except Exception as e:
+        _LOGGER.error(f"Error reloading config entry {entry.entry_id}: {e}", exc_info=True)
+        
+        # Try to restore integration in a working state
+        try:
+            _LOGGER.warning("Attempting recovery setup with original configuration")
+            await async_setup_entry(hass, entry)
+            _LOGGER.info("Recovery setup completed")
+        except Exception as recovery_error:
+            _LOGGER.error(f"Recovery setup failed: {recovery_error}", exc_info=True)
+            # Don't raise - let Home Assistant handle the failed integration
+    finally:
+        # Always remove reload flag
+        if hasattr(entry, "_reloading"):
+            delattr(entry, "_reloading")
 
 
 async def async_setup(hass, config):

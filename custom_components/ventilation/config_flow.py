@@ -31,10 +31,10 @@ def get_basic_schema():
         vol.Required("min_fan_output", default=0): vol.Coerce(int),
         vol.Required("max_fan_output", default=255): vol.Coerce(int),
         vol.Required("remote_device"): selector.DeviceSelector(
-            selector.DeviceSelectorConfig(integration="ramses_rf")
+            selector.DeviceSelectorConfig(integration="ramses_cc")
         ),
         vol.Required("fan_device"): selector.DeviceSelector(
-            selector.DeviceSelectorConfig(integration="ramses_rf")
+            selector.DeviceSelectorConfig(integration="ramses_cc")
         ),
     }, extra=vol.ALLOW_EXTRA)
 
@@ -847,13 +847,16 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             try:
                 await validate_basic_input(self.hass, user_input)
-                self._data.update(user_input)
-                return self.async_create_entry(title="", data={}, options=self._data)
+                # Create options dict with only the changed settings
+                options = {**self.config_entry.options}
+                options.update(user_input)
+                return self.async_create_entry(title="", data=options)
             except InvalidEntity:
                 errors["remote_device"] = "invalid_entity"
             except InvalidRange:
                 errors["min_fan_output"] = "invalid_range"
-            except Exception:
+            except Exception as e:
+                _LOGGER.error(f"Unknown error in fan_settings: {e}", exc_info=True)
                 errors["base"] = "unknown"
         return self.async_show_form(step_id="fan_settings", data_schema=self._schema_fan(), errors=errors)
 
@@ -897,10 +900,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     raise InvalidSensor("At least one VOC sensor must be specified")
                 if self._data.get("use_pm_sensors") and not self._data.get("pm_sensors"):
                     raise InvalidSensor("At least one PM sensor must be specified")
-                return self.async_create_entry(title="", data={}, options=self._data)
+                return self.async_create_entry(title="", data={**self.config_entry.options, **{k: v for k, v in self._data.items() if k in user_input or k.endswith('_sensors')}})
             except InvalidSensor:
                 errors["base"] = "no_sensors"
-            except Exception:
+            except Exception as e:
+                _LOGGER.error(f"Unknown error in sensor_settings: {e}", exc_info=True)
                 errors["base"] = "unknown"
         return self.async_show_form(step_id="sensor_settings", data_schema=self._schema_sensors(), errors=errors)
 
@@ -931,10 +935,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 ):
                     if key in user_input:
                         self._data[key] = validate_air_quality_index(user_input[key], name)
-                return self.async_create_entry(title="", data={}, options=self._data)
+                return self.async_create_entry(title="", data={**self.config_entry.options, **{key: self._data[key] for key in self._data if key.endswith('_index')}})
             except InvalidAirQualityIndex:
                 errors["base"] = "invalid_air_quality_index"
-            except Exception:
+            except Exception as e:
+                _LOGGER.error(f"Unknown error in iaq_settings: {e}", exc_info=True)
                 errors["base"] = "unknown"
         return self.async_show_form(step_id="iaq_settings", data_schema=self._schema_iaq(), errors=errors)
 
@@ -953,17 +958,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             try:
                 await validate_pid_parameters_input(self.hass, user_input)
-                self._data.update({
+                # Process ki_times string into list
+                validated_data = {
                     "setpoint": user_input["setpoint"],
                     "kp": user_input["kp"],
                     "update_interval": user_input["update_interval"],
                     "ki_times": validate_ki_times(user_input["ki_times"]),
-                })
-                return self.async_create_entry(title="", data={}, options=self._data)
+                }
+                return self.async_create_entry(title="", data={**self.config_entry.options, **validated_data})
             except InvalidRange:
                 errors["base"] = "invalid_range"
             except InvalidKiTimes:
                 errors["ki_times"] = "invalid_ki_times"
-            except Exception:
+            except Exception as e:
+                _LOGGER.error(f"Unknown error in pid_settings: {e}", exc_info=True)
                 errors["base"] = "unknown"
         return self.async_show_form(step_id="pid_settings", data_schema=self._schema_pid(), errors=errors)

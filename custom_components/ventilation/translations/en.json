@@ -185,5 +185,12 @@
         }
       }
     }
+  },
+  "entity": {
+    "number": {
+      "setpoint": {
+        "name": "Setpoint"
+      }
+    }
   }
 }
