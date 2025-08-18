@@ -22,6 +22,7 @@ from .const import (
     DEFAULT_PM_1_0_INDEX,
     DEFAULT_PM_2_5_INDEX,
     DEFAULT_PM_10_INDEX,
+    DEFAULT_HUMIDITY_INDEX,
 )
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ def get_sensor_types_schema():
         vol.Optional("use_co2_sensors", default=True): cv.boolean,
         vol.Optional("use_voc_sensors", default=False): cv.boolean,
         vol.Optional("use_pm_sensors", default=False): cv.boolean,
+        vol.Optional("use_humidity_sensors", default=False): cv.boolean,
         vol.Optional("back", default=False): selector.BooleanSelector(),
     }, extra=vol.ALLOW_EXTRA)
 
@@ -117,6 +119,25 @@ def get_pm_sensors_schema(hass: HomeAssistant = None, current_sensors=None):
     return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
 
 
+def get_humidity_sensors_schema(hass: HomeAssistant = None, current_sensors=None):
+    """Generate schema for Humidity sensors with multiple entity selector."""
+    # Get current sensors as default
+    default_sensors = current_sensors if current_sensors else []
+    
+    schema_dict = {
+        vol.Required("humidity_sensors", default=default_sensors): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor",
+                device_class="humidity",
+                multiple=True,
+            )
+        ),
+        vol.Optional("back", default=False): selector.BooleanSelector(),
+    }
+    
+    return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
+
+
 def get_air_quality_indices_schema(sensor_types):
     """Generate schema for air quality indices based on selected sensor types."""
     schema_dict = {}
@@ -138,6 +159,10 @@ def get_air_quality_indices_schema(sensor_types):
         schema_dict[vol.Required("pm_1_0_index", default=",".join(map(str, DEFAULT_PM_1_0_INDEX)))] = cv.string
         schema_dict[vol.Required("pm_2_5_index", default=",".join(map(str, DEFAULT_PM_2_5_INDEX)))] = cv.string
         schema_dict[vol.Required("pm_10_index", default=",".join(map(str, DEFAULT_PM_10_INDEX)))] = cv.string
+    
+    # Add Humidity index if Humidity sensors are enabled
+    if sensor_types.get("use_humidity_sensors"):
+        schema_dict[vol.Required("humidity_index", default=",".join(map(str, DEFAULT_HUMIDITY_INDEX)))] = cv.string
     
     # Add back button
     schema_dict[vol.Optional("back", default=False)] = selector.BooleanSelector()
@@ -188,7 +213,7 @@ async def validate_sensor_types_input(hass: HomeAssistant, data: dict[str, Any])
     """Validate the sensor types selection."""
     
     # Check that at least one sensor type is selected
-    if not any([data.get("use_co2_sensors"), data.get("use_voc_sensors"), data.get("use_pm_sensors")]):
+    if not any([data.get("use_co2_sensors"), data.get("use_voc_sensors"), data.get("use_pm_sensors"), data.get("use_humidity_sensors")]):
         raise InvalidSensor("At least one sensor type must be selected")
     
     return {"title": "PID Ventilation Control"}
@@ -257,6 +282,15 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         all_sensors.extend(pm_sensors)
         sensor_types.append("PM")
     
+    # Check Humidity sensors
+    humidity_sensors = data.get("humidity_sensors", [])
+    if not isinstance(humidity_sensors, list):
+        humidity_sensors = [humidity_sensors] if humidity_sensors else []
+    humidity_sensors = [sensor for sensor in humidity_sensors if sensor and str(sensor).strip()]
+    if humidity_sensors:
+        all_sensors.extend(humidity_sensors)
+        sensor_types.append("Humidity")
+    
     if not all_sensors:
         raise InvalidSensor("At least one sensor must be specified")
     
@@ -294,19 +328,35 @@ def validate_air_quality_index(index_str: str, index_name: str, expected_count: 
             except ValueError:
                 raise InvalidAirQualityIndex(f"{index_name} value {i+1} '{part}' is not a valid number")
             
-            # Validate that values are in ascending order (except for the last one which can be higher)
+            # Validate that values are in strictly ascending order
             if i > 0 and index_value <= index_values[-1]:
-                raise InvalidAirQualityIndex(f"{index_name} values must be in ascending order")
+                if index_value == index_values[-1]:
+                    raise InvalidAirQualityIndex(f"{index_name} values must be in strictly ascending order. Value {i+1} ({index_value}) is equal to value {i} ({index_values[-1]})")
+                else:
+                    raise InvalidAirQualityIndex(f"{index_name} values must be in strictly ascending order. Value {i+1} ({index_value}) is less than value {i} ({index_values[-1]})")
             
             # Validate range based on index type
             if index_name.startswith("CO2") and not (0 <= index_value <= 10000):
                 raise InvalidAirQualityIndex(f"CO2 values must be between 0 and 10000 ppm")
-            elif index_name.startswith("VOC") and not (0 <= index_value <= 1000):
-                raise InvalidAirQualityIndex(f"VOC values must be between 0 and 1000 ppm")
+            elif index_name.startswith("VOC (parts)") and not (0 <= index_value <= 1000):
+                raise InvalidAirQualityIndex(f"VOC (parts) values must be between 0 and 1000 ppm")
+            elif index_name.startswith("VOC") and not index_name.startswith("VOC (parts)") and not (0 <= index_value <= 10000):
+                raise InvalidAirQualityIndex(f"VOC values must be between 0 and 10000 µg/m³")
             elif index_name.startswith("PM") and not (0 <= index_value <= 1000):
                 raise InvalidAirQualityIndex(f"PM values must be between 0 and 1000 µg/m³")
+            elif index_name.startswith("Humidity") and not (0 <= index_value <= 100):
+                raise InvalidAirQualityIndex(f"Humidity values must be between 0 and 100 %")
             
             index_values.append(index_value)
+        
+        # Final validation: ensure the entire sequence is strictly ascending
+        for i in range(1, len(index_values)):
+            if index_values[i] <= index_values[i-1]:
+                raise InvalidAirQualityIndex(f"{index_name} values must be in strictly ascending order throughout")
+        
+        # Additional validation: ensure first value is reasonable (not negative for most cases)
+        if index_values[0] < 0:
+            raise InvalidAirQualityIndex(f"{index_name} values cannot be negative")
         
         return index_values
         
@@ -366,6 +416,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             "pm10": False,
             "voc": False,
             "voc_parts": False,
+            "humidity": False,
         }
 
     @staticmethod
@@ -395,10 +446,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # Go to sensor type selection step
                 return await self.async_step_sensor_types()
             except InvalidEntity as err:
-                errors["entity_id"] = "invalid_entity"
+                errors["remote_device"] = str(err)
                 _LOGGER.warning(f"Invalid entity: {err}")
             except InvalidRange as err:
-                errors["min_fan_output"] = "invalid_range"
+                # Provide specific error messages based on validation
+                error_msg = str(err).lower()
+                if "minimum" in error_msg:
+                    errors["min_fan_output"] = str(err)
+                elif "maximum" in error_msg:
+                    errors["max_fan_output"] = str(err)
+                else:
+                    errors["min_fan_output"] = str(err)
                 _LOGGER.warning(f"Invalid range: {err}")
             except Exception as err:  # pylint: disable=broad-except
                 errors["base"] = "unknown"
@@ -458,19 +516,19 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                 return self.async_create_entry(title=title, data=self._data)
             except InvalidRange as err:
-                # Determine which field has the error based on the error message
+                # Provide specific error messages based on validation
                 error_msg = str(err).lower()
                 if "setpoint" in error_msg:
-                    errors["setpoint"] = "invalid_range"
+                    errors["setpoint"] = str(err)
                 elif "kp" in error_msg:
-                    errors["kp"] = "invalid_range"
+                    errors["kp"] = str(err)
                 elif "interval" in error_msg:
-                    errors["update_interval"] = "invalid_range"
+                    errors["update_interval"] = str(err)
                 else:
-                    errors["base"] = "invalid_range"
+                    errors["base"] = str(err)
                 _LOGGER.warning(f"Invalid range: {err}")
             except InvalidKiTimes as err:
-                errors["ki_times"] = "invalid_ki_times"
+                errors["ki_times"] = str(err)
                 _LOGGER.warning(f"Invalid Ki times: {err}")
             except Exception as err:  # pylint: disable=broad-except
                 errors["base"] = "unknown"
@@ -508,6 +566,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return await self.async_step_voc_sensors()
                 elif user_input.get("use_pm_sensors"):
                     return await self.async_step_pm_sensors()
+                elif user_input.get("use_humidity_sensors"):
+                    return await self.async_step_humidity_sensors()
                 else:
                     # This shouldn't happen due to validation, but just in case
                     return await self.async_step_air_quality_indices()
@@ -549,6 +609,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return await self.async_step_voc_sensors()
                 elif self._sensor_types.get("use_pm_sensors"):
                     return await self.async_step_pm_sensors()
+                elif self._sensor_types.get("use_humidity_sensors"):
+                    return await self.async_step_humidity_sensors()
                 else:
                     return await self.async_step_air_quality_indices()
                     
@@ -594,6 +656,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # Go to next sensor type or air quality indices step
                 if self._sensor_types.get("use_pm_sensors"):
                     return await self.async_step_pm_sensors()
+                elif self._sensor_types.get("use_humidity_sensors"):
+                    return await self.async_step_humidity_sensors()
                 else:
                     return await self.async_step_air_quality_indices()
                     
@@ -638,8 +702,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # Detect PM device classes selected
                 self._update_pm_classes(user_input["pm_sensors"])
                 
-                # Go to air quality indices step
-                return await self.async_step_air_quality_indices()
+                # Go to next sensor type or air quality indices step
+                if self._sensor_types.get("use_humidity_sensors"):
+                    return await self.async_step_humidity_sensors()
+                else:
+                    return await self.async_step_air_quality_indices()
                     
             except InvalidSensor as err:
                 errors["pm_sensors"] = "invalid_sensor"
@@ -655,6 +722,52 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_humidity_sensors(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the Humidity sensor selection step."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            # Check for back button
+            if user_input.get("back"):
+                # Go back to PM step if it was selected, else VOC step if selected, else CO2 step if selected, else sensor_types
+                if self._sensor_types.get("use_pm_sensors"):
+                    return await self.async_step_pm_sensors()
+                elif self._sensor_types.get("use_voc_sensors"):
+                    return await self.async_step_voc_sensors()
+                elif self._sensor_types.get("use_co2_sensors"):
+                    return await self.async_step_co2_sensors()
+                else:
+                    return await self.async_step_sensor_types()
+                
+            try:
+                # Validate the sensor input
+                info = await validate_sensors_input(self.hass, user_input, "humidity")
+                
+                # Store Humidity sensors
+                self._data["humidity_sensors"] = user_input["humidity_sensors"]
+                
+                # Detect Humidity device classes selected
+                self._update_humidity_classes(user_input["humidity_sensors"])
+                
+                # Go to air quality indices step
+                return await self.async_step_air_quality_indices()
+                    
+            except InvalidSensor as err:
+                errors["humidity_sensors"] = "invalid_sensor"
+                _LOGGER.warning(f"Invalid Humidity sensor: {err}")
+            except Exception as err:  # pylint: disable=broad-except
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in Humidity sensor step: {err}", exc_info=True)
+
+        # Show the Humidity sensor selection form
+        return self.async_show_form(
+            step_id="humidity_sensors",
+            data_schema=get_humidity_sensors_schema(self.hass),
+            errors=errors,
+        )
+
     async def async_step_air_quality_indices(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -665,7 +778,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Check for back button
             if user_input.get("back"):
                 # Go back to the last sensor type step that was configured
-                if self._sensor_types.get("use_pm_sensors"):
+                if self._sensor_types.get("use_humidity_sensors"):
+                    return await self.async_step_humidity_sensors()
+                elif self._sensor_types.get("use_pm_sensors"):
                     return await self.async_step_pm_sensors()
                 elif self._sensor_types.get("use_voc_sensors"):
                     return await self.async_step_voc_sensors()
@@ -680,48 +795,56 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if self._sensor_types.get("use_co2_sensors"):
                     co2_index = validate_air_quality_index(user_input["co2_index"], "CO2")
                     self._data["co2_index"] = co2_index
-            except InvalidAirQualityIndex:
-                errors["co2_index"] = "invalid_air_quality_index"
+            except InvalidAirQualityIndex as e:
+                errors["co2_index"] = str(e)
                 valid = False
             
             try:
                 if self._sensor_types.get("use_voc_sensors") and self._sensor_classes["voc"]:
                     voc_index = validate_air_quality_index(user_input["voc_index"], "VOC")
                     self._data["voc_index"] = voc_index
-            except InvalidAirQualityIndex:
-                errors["voc_index"] = "invalid_air_quality_index"
+            except InvalidAirQualityIndex as e:
+                errors["voc_index"] = str(e)
                 valid = False
             
             try:
                 if self._sensor_types.get("use_voc_sensors") and self._sensor_classes["voc_parts"]:
                     voc_ppm_index = validate_air_quality_index(user_input["voc_ppm_index"], "VOC (parts)")
                     self._data["voc_ppm_index"] = voc_ppm_index
-            except InvalidAirQualityIndex:
-                errors["voc_ppm_index"] = "invalid_air_quality_index"
+            except InvalidAirQualityIndex as e:
+                errors["voc_ppm_index"] = str(e)
                 valid = False
             
             try:
                 if self._sensor_types.get("use_pm_sensors") and self._sensor_classes["pm1"]:
                     pm_1_0_index = validate_air_quality_index(user_input["pm_1_0_index"], "PM1.0")
                     self._data["pm_1_0_index"] = pm_1_0_index
-            except InvalidAirQualityIndex:
-                errors["pm_1_0_index"] = "invalid_air_quality_index"
+            except InvalidAirQualityIndex as e:
+                errors["pm_1_0_index"] = str(e)
                 valid = False
             
             try:
                 if self._sensor_types.get("use_pm_sensors") and self._sensor_classes["pm25"]:
                     pm_2_5_index = validate_air_quality_index(user_input["pm_2_5_index"], "PM2.5")
                     self._data["pm_2_5_index"] = pm_2_5_index
-            except InvalidAirQualityIndex:
-                errors["pm_2_5_index"] = "invalid_air_quality_index"
+            except InvalidAirQualityIndex as e:
+                errors["pm_2_5_index"] = str(e)
                 valid = False
             
             try:
                 if self._sensor_types.get("use_pm_sensors") and self._sensor_classes["pm10"]:
                     pm_10_index = validate_air_quality_index(user_input["pm_10_index"], "PM10", expected_count=5)
                     self._data["pm_10_index"] = pm_10_index
-            except InvalidAirQualityIndex:
-                errors["pm_10_index"] = "invalid_air_quality_index"
+            except InvalidAirQualityIndex as e:
+                errors["pm_10_index"] = str(e)
+                valid = False
+            
+            try:
+                if self._sensor_types.get("use_humidity_sensors") and self._sensor_classes["humidity"]:
+                    humidity_index = validate_air_quality_index(user_input["humidity_index"], "Humidity")
+                    self._data["humidity_index"] = humidity_index
+            except InvalidAirQualityIndex as e:
+                errors["humidity_index"] = str(e)
                 valid = False
 
             if valid:
@@ -752,6 +875,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             schema_dict[vol.Required("pm_2_5_index", default=",".join(map(str, DEFAULT_PM_2_5_INDEX)))] = cv.string
         if self._sensor_types.get("use_pm_sensors") and self._sensor_classes["pm10"]:
             schema_dict[vol.Required("pm_10_index", default=",".join(map(str, DEFAULT_PM_10_INDEX)))] = cv.string
+        if self._sensor_types.get("use_humidity_sensors") and self._sensor_classes["humidity"]:
+            schema_dict[vol.Required("humidity_index", default=",".join(map(str, DEFAULT_HUMIDITY_INDEX)))] = cv.string
         schema_dict[vol.Optional("back", default=False)] = selector.BooleanSelector()
         return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
 
@@ -786,6 +911,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._sensor_classes["pm1"] = "pm1" in classes
         self._sensor_classes["pm25"] = "pm25" in classes
         self._sensor_classes["pm10"] = "pm10" in classes
+
+    def _update_humidity_classes(self, entity_ids: list[str]) -> None:
+        classes = self._detect_device_classes(entity_ids)
+        self._sensor_classes["humidity"] = "humidity" in classes
 
 class InvalidSensor(HomeAssistantError):
     """Error to indicate sensor not found."""
@@ -846,15 +975,48 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                await validate_basic_input(self.hass, user_input)
-                # Create options dict with only the changed settings
-                options = {**self.config_entry.options}
-                options.update(user_input)
-                return self.async_create_entry(title="", data=options)
-            except InvalidEntity:
-                errors["remote_device"] = "invalid_entity"
-            except InvalidRange:
-                errors["min_fan_output"] = "invalid_range"
+                # Validate each field individually to provide specific error messages
+                validated_data = {}
+                
+                # Validate min_fan_output
+                try:
+                    if not (0 <= user_input["min_fan_output"] <= 254):
+                        raise InvalidRange("Minimum fan output must be between 0 and 254")
+                    validated_data["min_fan_output"] = user_input["min_fan_output"]
+                except (ValueError, InvalidRange) as e:
+                    errors["min_fan_output"] = str(e)
+                
+                # Validate max_fan_output
+                try:
+                    if not (1 <= user_input["max_fan_output"] <= 255):
+                        raise InvalidRange("Maximum fan output must be between 1 and 255")
+                    validated_data["max_fan_output"] = user_input["max_fan_output"]
+                except (ValueError, InvalidRange) as e:
+                    errors["max_fan_output"] = str(e)
+                
+                # Validate min < max only if both are valid
+                if "min_fan_output" not in errors and "max_fan_output" not in errors:
+                    if user_input["min_fan_output"] >= user_input["max_fan_output"]:
+                        errors["min_fan_output"] = "Minimum fan output must be less than maximum fan output"
+                
+                # Validate remote_device
+                try:
+                    if not user_input.get("remote_device"):
+                        raise InvalidEntity("Remote device must be selected")
+                    validated_data["remote_device"] = user_input["remote_device"]
+                except InvalidEntity as e:
+                    errors["remote_device"] = str(e)
+                
+                # Add fan_device if provided
+                if user_input.get("fan_device"):
+                    validated_data["fan_device"] = user_input["fan_device"]
+                
+                # If no validation errors, create the entry
+                if not errors:
+                    options = {**self.config_entry.options}
+                    options.update(validated_data)
+                    return self.async_create_entry(title="", data=options)
+                    
             except Exception as e:
                 _LOGGER.error(f"Unknown error in fan_settings: {e}", exc_info=True)
                 errors["base"] = "unknown"
@@ -867,6 +1029,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             vol.Optional("use_co2_sensors", default=cur.get("use_co2_sensors", bool(cur.get("co2_sensors")))): cv.boolean,
             vol.Optional("use_voc_sensors", default=cur.get("use_voc_sensors", bool(cur.get("voc_sensors")))): cv.boolean,
             vol.Optional("use_pm_sensors", default=cur.get("use_pm_sensors", bool(cur.get("pm_sensors")))): cv.boolean,
+            vol.Optional("use_humidity_sensors", default=cur.get("use_humidity_sensors", bool(cur.get("humidity_sensors")))): cv.boolean,
             vol.Optional("co2_sensors", default=cur.get("co2_sensors", [])): selector.EntitySelector(
                 selector.EntitySelectorConfig(domain="sensor", device_class="carbon_dioxide", multiple=True)
             ),
@@ -876,6 +1039,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             vol.Optional("pm_sensors", default=cur.get("pm_sensors", [])): selector.EntitySelector(
                 selector.EntitySelectorConfig(domain="sensor", device_class=["pm1", "pm10", "pm25"], multiple=True)
             ),
+            vol.Optional("humidity_sensors", default=cur.get("humidity_sensors", [])): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor", device_class="humidity", multiple=True)
+            ),
         }, extra=vol.ALLOW_EXTRA)
 
     async def async_step_sensor_settings(self, user_input: dict[str, Any] | None = None) -> FlowResult:
@@ -883,11 +1049,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             try:
                 # Persist booleans
-                for k in ("use_co2_sensors", "use_voc_sensors", "use_pm_sensors"):
+                for k in ("use_co2_sensors", "use_voc_sensors", "use_pm_sensors", "use_humidity_sensors"):
                     if k in user_input:
                         self._data[k] = user_input[k]
                 # Persist sensors (lists)
-                for k in ("co2_sensors", "voc_sensors", "pm_sensors"):
+                for k in ("co2_sensors", "voc_sensors", "pm_sensors", "humidity_sensors"):
                     if k in user_input:
                         sensors = user_input.get(k) or []
                         if not isinstance(sensors, list):
@@ -900,6 +1066,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     raise InvalidSensor("At least one VOC sensor must be specified")
                 if self._data.get("use_pm_sensors") and not self._data.get("pm_sensors"):
                     raise InvalidSensor("At least one PM sensor must be specified")
+                if self._data.get("use_humidity_sensors") and not self._data.get("humidity_sensors"):
+                    raise InvalidSensor("At least one Humidity sensor must be specified")
                 return self.async_create_entry(title="", data={**self.config_entry.options, **{k: v for k, v in self._data.items() if k in user_input or k.endswith('_sensors')}})
             except InvalidSensor:
                 errors["base"] = "no_sensors"
@@ -918,26 +1086,34 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             vol.Optional("pm_1_0_index", default=",".join(map(str, cur.get("pm_1_0_index", DEFAULT_PM_1_0_INDEX)))): cv.string,
             vol.Optional("pm_2_5_index", default=",".join(map(str, cur.get("pm_2_5_index", DEFAULT_PM_2_5_INDEX)))): cv.string,
             vol.Optional("pm_10_index", default=",".join(map(str, cur.get("pm_10_index", DEFAULT_PM_10_INDEX)))): cv.string,
+            vol.Optional("humidity_index", default=",".join(map(str, cur.get("humidity_index", DEFAULT_HUMIDITY_INDEX)))): cv.string,
         }, extra=vol.ALLOW_EXTRA)
 
     async def async_step_iaq_settings(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                # Only validate and update provided fields
+                # Validate each field individually to provide specific error messages
                 for key, name in (
                     ("co2_index", "CO2"),
                     ("voc_index", "VOC"),
-                    ("voc_ppm_index", "VOC PPM"),
+                    ("voc_ppm_index", "VOC (parts)"),
                     ("pm_1_0_index", "PM1.0"),
                     ("pm_2_5_index", "PM2.5"),
                     ("pm_10_index", "PM10"),
+                    ("humidity_index", "Humidity"),
                 ):
                     if key in user_input:
-                        self._data[key] = validate_air_quality_index(user_input[key], name)
-                return self.async_create_entry(title="", data={**self.config_entry.options, **{key: self._data[key] for key in self._data if key.endswith('_index')}})
-            except InvalidAirQualityIndex:
-                errors["base"] = "invalid_air_quality_index"
+                        try:
+                            self._data[key] = validate_air_quality_index(user_input[key], name)
+                        except InvalidAirQualityIndex as e:
+                            # Show the specific error message for this field
+                            errors[key] = str(e)
+                
+                # If no validation errors, create the entry
+                if not errors:
+                    return self.async_create_entry(title="", data={**self.config_entry.options, **{key: self._data[key] for key in self._data if key.endswith('_index')}})
+                    
             except Exception as e:
                 _LOGGER.error(f"Unknown error in iaq_settings: {e}", exc_info=True)
                 errors["base"] = "unknown"
@@ -957,19 +1133,43 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                await validate_pid_parameters_input(self.hass, user_input)
-                # Process ki_times string into list
-                validated_data = {
-                    "setpoint": user_input["setpoint"],
-                    "kp": user_input["kp"],
-                    "update_interval": user_input["update_interval"],
-                    "ki_times": validate_ki_times(user_input["ki_times"]),
-                }
-                return self.async_create_entry(title="", data={**self.config_entry.options, **validated_data})
-            except InvalidRange:
-                errors["base"] = "invalid_range"
-            except InvalidKiTimes:
-                errors["ki_times"] = "invalid_ki_times"
+                # Validate each field individually to provide specific error messages
+                validated_data = {}
+                
+                # Validate setpoint
+                try:
+                    if not (0.0 <= user_input["setpoint"] <= 5.0):
+                        raise InvalidRange("Setpoint must be between 0.0 and 5.0")
+                    validated_data["setpoint"] = user_input["setpoint"]
+                except (ValueError, InvalidRange) as e:
+                    errors["setpoint"] = str(e)
+                
+                # Validate Kp
+                try:
+                    if not (0.1 <= user_input["kp"] <= 1000.0):
+                        raise InvalidRange("Kp must be between 0.1 and 1000.0")
+                    validated_data["kp"] = user_input["kp"]
+                except (ValueError, InvalidRange) as e:
+                    errors["kp"] = str(e)
+                
+                # Validate update_interval
+                try:
+                    if not (10 <= user_input["update_interval"] <= 3600):
+                        raise InvalidRange("Update interval must be between 10 and 3600 seconds")
+                    validated_data["update_interval"] = user_input["update_interval"]
+                except (ValueError, InvalidRange) as e:
+                    errors["update_interval"] = str(e)
+                
+                # Validate ki_times
+                try:
+                    validated_data["ki_times"] = validate_ki_times(user_input["ki_times"])
+                except InvalidKiTimes as e:
+                    errors["ki_times"] = str(e)
+                
+                # If no validation errors, create the entry
+                if not errors:
+                    return self.async_create_entry(title="", data={**self.config_entry.options, **validated_data})
+                    
             except Exception as e:
                 _LOGGER.error(f"Unknown error in pid_settings: {e}", exc_info=True)
                 errors["base"] = "unknown"

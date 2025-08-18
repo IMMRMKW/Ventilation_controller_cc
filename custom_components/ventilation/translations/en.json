@@ -41,12 +41,14 @@
           "use_co2_sensors": "Use CO2 Sensors",
           "use_voc_sensors": "Use VOC Sensors",
           "use_pm_sensors": "Use PM Sensors",
+          "use_humidity_sensors": "Use Humidity Sensors",
           "back": "Back"
         },
         "data_description": {
           "use_co2_sensors": "Carbon Dioxide sensors (ppm) - Primary air quality indicator",
           "use_voc_sensors": "Volatile Organic Compounds sensors (ppb) - Chemical pollutants",
-          "use_pm_sensors": "Particulate Matter sensors (µg/m³) - Dust and particles"
+          "use_pm_sensors": "Particulate Matter sensors (µg/m³) - Dust and particles",
+          "use_humidity_sensors": "Humidity sensors (%) - Relative water content of air"
         }
       },
       "air_quality_indices": {
@@ -59,6 +61,7 @@
           "pm_2_5_index": "PM2.5 Index Thresholds (µg/m³)",
           "pm_10_index": "PM10 Index Thresholds (µg/m³)",
           "voc_ppm_index": "VOC Parts Index Thresholds",
+          "humidity_index": "Humidity Index Thresholds, (%)",
           "back": "Back"
         },
         "data_description": {
@@ -67,7 +70,8 @@
           "voc_ppm_index": "Six comma-separated VOC thresholds for 'volatile_organic_compounds_parts' sensors (indices 0-5)",
           "pm_1_0_index": "Six comma-separated PM1.0 thresholds in µg/m³ for air quality indices 0-5",
           "pm_2_5_index": "Six comma-separated PM2.5 thresholds in µg/m³ for air quality indices 0-5",
-          "pm_10_index": "Five comma-separated PM10 thresholds in µg/m³ for air quality indices 1-5"
+          "pm_10_index": "Six comma-separated PM10 thresholds in µg/m³ for air quality indices 0-5",
+          "humidity_index": "Six comma-separated humidity thresholds in % above the average that day for air quality indices 0-5"
         }
       },
       "co2_sensors": {
@@ -101,6 +105,17 @@
         },
         "data_description": {
           "pm_sensors": "Select one or more PM sensor entities - PM1, PM2.5, or PM10 (select at least one, can select multiple)"
+        }
+      },
+      "humidity_sensors": {
+        "title": "Humidity Sensors",
+        "description": "Select one or more humidity sensors. You can select multiple sensors by holding Ctrl/Cmd while clicking.",
+        "data": {
+          "humidity_sensors": "Humidity Sensor Entities",
+          "back": "Back"
+        },
+        "data_description": {
+          "humidity_sensors": "Select one or more humidity sensor entities (select at least one, can select multiple)"
         }
       },
       "advanced": {
@@ -159,20 +174,23 @@
           "use_co2_sensors": "Use CO2 Sensors",
           "use_voc_sensors": "Use VOC Sensors",
           "use_pm_sensors": "Use PM Sensors",
+          "use_humidity_sensors": "Use Humidity Sensors",
           "co2_sensors": "CO2 Sensor Entities",
           "voc_sensors": "VOC Sensor Entities",
-          "pm_sensors": "PM Sensor Entities"
+          "pm_sensors": "PM Sensor Entities",
+          "humidity_sensors": "Humidity Sensor Entities"
         }
       },
       "iaq_settings": {
         "title": "IAQ settings",
         "data": {
           "co2_index": "CO2 Index Thresholds (ppm)",
-          "voc_index": "VOC Index Thresholds (ppb)",
-          "voc_ppm_index": "VOC Parts Index Thresholds",
+          "voc_index": "VOC Index Thresholds (µg/m³)",
+          "voc_ppm_index": "VOC Parts Index Thresholds (ppm)",
           "pm_1_0_index": "PM1.0 Index Thresholds (µg/m³)",
           "pm_2_5_index": "PM2.5 Index Thresholds (µg/m³)",
-          "pm_10_index": "PM10 Index Thresholds (µg/m³)"
+          "pm_10_index": "PM10 Index Thresholds (µg/m³)",
+          "humidity_index": "Humidity Index Thresholds (%)"
         }
       },
       "pid_settings": {

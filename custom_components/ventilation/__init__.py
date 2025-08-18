@@ -20,9 +20,11 @@ from .const import (
     DEFAULT_PM_1_0_INDEX,
     DEFAULT_PM_2_5_INDEX,
     DEFAULT_PM_10_INDEX,
+    DEFAULT_HUMIDITY_INDEX,
     CONF_CO2_SENSORS,
     CONF_VOC_SENSORS,
     CONF_PM_SENSORS,
+    CONF_HUMIDITY_SENSORS,
     CONF_SETPOINT,
     CONF_MIN_FAN_OUTPUT,
     CONF_MAX_FAN_OUTPUT,
@@ -37,11 +39,90 @@ from .const import (
     CONF_PM_1_0_INDEX,
     CONF_PM_2_5_INDEX,
     CONF_PM_10_INDEX,
+    CONF_HUMIDITY_INDEX,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SWITCH, Platform.SENSOR, Platform.NUMBER]
+
+class HumidityMovingAverage:
+    """Manages 24-hour moving averages for humidity sensors."""
+    
+    def __init__(self):
+        """Initialize the humidity moving average tracker."""
+        self.sensor_data: dict[str, list[tuple[datetime, float]]] = {}
+        self._cleanup_interval = timedelta(hours=1)  # Clean up old data every hour
+        self._last_cleanup = datetime.now()
+    
+    def add_reading(self, sensor_id: str, value: float, timestamp: datetime = None) -> None:
+        """Add a new humidity reading for a sensor."""
+        if timestamp is None:
+            timestamp = datetime.now()
+            
+        # Initialize sensor data if not exists
+        if sensor_id not in self.sensor_data:
+            self.sensor_data[sensor_id] = []
+            
+        # Add new reading
+        self.sensor_data[sensor_id].append((timestamp, value))
+        
+        # Clean up old data periodically
+        if datetime.now() - self._last_cleanup > self._cleanup_interval:
+            self._cleanup_old_data()
+            self._last_cleanup = datetime.now()
+    
+    def get_24h_average(self, sensor_id: str) -> float | None:
+        """Get the 24-hour moving average for a sensor."""
+        if sensor_id not in self.sensor_data:
+            return None
+            
+        now = datetime.now()
+        cutoff_time = now - timedelta(hours=24)
+        
+        # Filter readings from last 24 hours
+        recent_readings = [
+            (timestamp, value) for timestamp, value in self.sensor_data[sensor_id]
+            if timestamp >= cutoff_time
+        ]
+        
+        if not recent_readings:
+            return None
+            
+        # Calculate weighted average based on time intervals
+        if len(recent_readings) == 1:
+            return recent_readings[0][1]
+            
+        # Calculate time-weighted average
+        total_weighted_value = 0.0
+        total_time = 0.0
+        
+        for i in range(len(recent_readings) - 1):
+            current_time, current_value = recent_readings[i]
+            next_time, _ = recent_readings[i + 1]
+            
+            # Time interval this reading was valid for
+            interval = (next_time - current_time).total_seconds()
+            total_weighted_value += current_value * interval
+            total_time += interval
+        
+        # Add the last reading weighted to current time
+        last_time, last_value = recent_readings[-1]
+        final_interval = (now - last_time).total_seconds()
+        total_weighted_value += last_value * final_interval
+        total_time += final_interval
+        
+        return total_weighted_value / total_time if total_time > 0 else None
+    
+    def _cleanup_old_data(self) -> None:
+        """Remove readings older than 25 hours (keep a bit extra for safety)."""
+        cutoff_time = datetime.now() - timedelta(hours=25)
+        
+        for sensor_id in self.sensor_data:
+            self.sensor_data[sensor_id] = [
+                (timestamp, value) for timestamp, value in self.sensor_data[sensor_id]
+                if timestamp >= cutoff_time
+            ]
 
 # Helper to read sensor state with fallback to previous known good value
 def _read_value(hass: HomeAssistant, entity_id: str, previous_values: dict[str, float], fallback: float) -> float:
@@ -67,8 +148,10 @@ def _worst_air_quality_index(
     co2_sensors: list[str],
     voc_sensors: list[str],
     pm_sensors: list[str],
+    humidity_sensors: list[str],
     thresholds_by_dc: dict[str, list[float]],
     previous_values: dict[str, float],
+    humidity_avg_tracker: HumidityMovingAverage,
 ) -> tuple[float, str, float, str]:
     """Return (max_index, worst_entity_id, value, device_class)."""
     worst_idx = 0.0
@@ -76,7 +159,7 @@ def _worst_air_quality_index(
     worst_value = 0.0
     worst_dc = ""
 
-    # Build a combined list preserving group to allow fallback mapping
+    # Process CO2, VOC, and PM sensors (unchanged logic)
     for eid in list(co2_sensors) + list(voc_sensors) + list(pm_sensors):
         state = hass.states.get(eid)
         dc = state.attributes.get("device_class") if state else None  # type: ignore[union-attr]
@@ -108,6 +191,49 @@ def _worst_air_quality_index(
             worst_value = value
             worst_dc = dc or "unknown"
 
+    # Process humidity sensors with 24-hour average deviation logic
+    for eid in humidity_sensors:
+        state = hass.states.get(eid)
+        dc = state.attributes.get("device_class") if state else "humidity"  # type: ignore[union-attr]
+        
+        thresholds = thresholds_by_dc.get("humidity", DEFAULT_HUMIDITY_INDEX)
+        fallback = 50.0  # Reasonable humidity fallback
+        
+        current_value = _read_value(hass, eid, previous_values, fallback)
+        
+        # Add current reading to moving average tracker
+        humidity_avg_tracker.add_reading(eid, current_value)
+        
+        # Get 24-hour average
+        avg_24h = humidity_avg_tracker.get_24h_average(eid)
+        
+        if avg_24h is not None:
+            # Calculate deviation from 24-hour average
+            deviation = abs(current_value - avg_24h)
+            
+            # Use the deviation against the original thresholds
+            # This way, we measure how much the current humidity deviates from the baseline
+            try:
+                idx = determine_index(deviation, thresholds)
+            except Exception:
+                continue
+            
+            _LOGGER.debug(f"Humidity sensor {eid}: current={current_value:.1f}%, 24h_avg={avg_24h:.1f}%, deviation={deviation:.1f}%, index={idx:.2f}")
+        else:
+            # No 24h average yet, use current value against original thresholds
+            try:
+                idx = determine_index(current_value, thresholds)
+            except Exception:
+                continue
+            
+            _LOGGER.debug(f"Humidity sensor {eid}: current={current_value:.1f}%, no 24h average yet, index={idx:.2f}")
+
+        if idx > worst_idx:
+            worst_idx = idx
+            worst_entity = eid
+            worst_value = current_value
+            worst_dc = dc or "humidity"
+
     return worst_idx, worst_entity, worst_value, worst_dc
 
 def format_fan_command(remote_serial: str, fan_serial: str, rate: int) -> str:
@@ -138,6 +264,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     co2_sensors = cfg.get(CONF_CO2_SENSORS, [])
     voc_sensors = cfg.get(CONF_VOC_SENSORS, [])
     pm_sensors = cfg.get(CONF_PM_SENSORS, [])
+    humidity_sensors = cfg.get(CONF_HUMIDITY_SENSORS, [])
     setpoint = cfg[CONF_SETPOINT]
     min_fan_output = cfg[CONF_MIN_FAN_OUTPUT]
     max_fan_output = cfg[CONF_MAX_FAN_OUTPUT]
@@ -204,6 +331,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     pm_1_0_index = cfg.get(CONF_PM_1_0_INDEX, DEFAULT_PM_1_0_INDEX)
     pm_2_5_index = cfg.get(CONF_PM_2_5_INDEX, DEFAULT_PM_2_5_INDEX)
     pm_10_index = cfg.get(CONF_PM_10_INDEX, DEFAULT_PM_10_INDEX)
+    humidity_index = cfg.get(CONF_HUMIDITY_INDEX, DEFAULT_HUMIDITY_INDEX)
 
     thresholds_by_dc = {
         "carbon_dioxide": co2_index,
@@ -212,10 +340,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "pm1": pm_1_0_index,
         "pm25": pm_2_5_index,
         "pm10": pm_10_index,
+        "humidity": humidity_index,
     }
     
     _LOGGER.info(
-        f"Ventilation setup - CO2: {len(co2_sensors)}, VOC: {len(voc_sensors)}, PM: {len(pm_sensors)}, Setpoint: {setpoint}"
+        f"Ventilation setup - CO2: {len(co2_sensors)}, VOC: {len(voc_sensors)}, PM: {len(pm_sensors)}, Humidity: {len(humidity_sensors)}, Setpoint: {setpoint}"
     )
     _LOGGER.info(f"Fan range: {min_fan_output}-{max_fan_output}, Kp: {kp_config}, Update interval: {update_interval}s")
   
@@ -235,6 +364,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Previous values cache per entity
     previous_values: dict[str, float] = {}
+    
+    # Initialize 24-hour humidity moving average tracker
+    humidity_avg_tracker = HumidityMovingAverage()
 
     async def pid_control(now):
         nonlocal integral, prev_error, previous_values
@@ -245,6 +377,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Reset time baseline to avoid integral spike when re-enabled
             entry_data["last_execution_time"] = datetime.now()
             return
+            
+        # Get humidity tracker from stored data
+        humidity_avg_tracker = entry_data.get("humidity_avg_tracker", HumidityMovingAverage())
         
         # Get current setpoint (may have been updated via number entity)
         runtime_setpoint = entry_data.get("current_setpoint")
@@ -273,8 +408,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             co2_sensors,
             voc_sensors,
             pm_sensors,
+            humidity_sensors,
             thresholds_by_dc,
             previous_values,
+            humidity_avg_tracker,
         )
         air_quality_index = aqi
 
@@ -427,6 +564,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "learned_commands": set(),  # Track which rate commands have been learned
         "last_execution_time": None,  # Instance-specific last execution time
         "current_setpoint": setpoint,  # Initialize with config setpoint
+        "humidity_avg_tracker": humidity_avg_tracker,  # Store humidity moving average tracker
     }
 
     # Ensure switch platform is set up after state exists
