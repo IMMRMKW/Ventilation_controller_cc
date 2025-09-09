@@ -2,19 +2,115 @@
   "config": {
     "step": {
       "user": {
+        "title": "Device Selection",
+        "description": "Select your ventilation system devices and number of zones",
+        "data": {
+          "remote_device": "Select your remote control device",
+          "fan_device": "Select your fan device",
+          "num_zones": "Number of ventilation zones"
+        },
+        "data_description": {
+          "remote_device": "The ramses_cc remote device to control the system",
+          "fan_device": "The physical fan device to control",
+          "num_zones": "Enter the number of ventilation zones (1-5). Each zone will have its own message ID and fan rate settings."
+        }
+      },
+      "fan_settings": {
         "title": "Fan Settings",
-        "description": "Configure your ventilation fan hardware settings",
+        "description": "Configure your ventilation fan speed settings",
         "data": {
           "min_fan_output": "Minimum Fan Output",
           "max_fan_output": "Maximum Fan Output",
-          "remote_device": "Select your remote control device",
-          "fan_device": "Select your fan"
+          "back": "Back"
         },
         "data_description": {
           "min_fan_output": "Minimum fan speed value (0-254)",
-          "max_fan_output": "Maximum fan speed value (1-255)",
-          "remote_device": "The ramses_cc remote device to control the fan",
-          "fan_device": "The physical fan device to control"
+          "max_fan_output": "Maximum fan speed value (1-255)"
+        }
+      },
+      "zone_config_1": {
+        "title": "Zone 1: Message Configuration",
+        "description": "Configure message IDs and fan rate limits for Zone 1",
+        "data": {
+          "id_from": "ID From (Remote Device)",
+          "id_to": "ID To (Zone Device)",
+          "min_fan_rate": "Minimum Fan Rate",
+          "max_fan_rate": "Maximum Fan Rate",
+          "back": "Back"
+        },
+        "data_description": {
+          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
+          "id_to": "Target device ID (e.g., '32:146231' for zone fan/valve)",
+          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
+          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+        }
+      },
+      "zone_config_2": {
+        "title": "Zone 2: Message Configuration",
+        "description": "Configure message IDs and fan rate limits for Zone 2",
+        "data": {
+          "id_from": "ID From (Remote Device)",
+          "id_to": "ID To (Zone Device)",
+          "min_fan_rate": "Minimum Fan Rate",
+          "max_fan_rate": "Maximum Fan Rate",
+          "back": "Back"
+        },
+        "data_description": {
+          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
+          "id_to": "Target device ID (e.g., '32:146232' for zone fan/valve)",
+          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
+          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+        }
+      },
+      "zone_config_3": {
+        "title": "Zone 3: Message Configuration",
+        "description": "Configure message IDs and fan rate limits for Zone 3",
+        "data": {
+          "id_from": "ID From (Remote Device)",
+          "id_to": "ID To (Zone Device)",
+          "min_fan_rate": "Minimum Fan Rate",
+          "max_fan_rate": "Maximum Fan Rate",
+          "back": "Back"
+        },
+        "data_description": {
+          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
+          "id_to": "Target device ID (e.g., '32:146233' for zone fan/valve)",
+          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
+          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+        }
+      },
+      "zone_config_4": {
+        "title": "Zone 4: Message Configuration",
+        "description": "Configure message IDs and fan rate limits for Zone 4",
+        "data": {
+          "id_from": "ID From (Remote Device)",
+          "id_to": "ID To (Zone Device)",
+          "min_fan_rate": "Minimum Fan Rate",
+          "max_fan_rate": "Maximum Fan Rate",
+          "back": "Back"
+        },
+        "data_description": {
+          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
+          "id_to": "Target device ID (e.g., '32:146234' for zone fan/valve)",
+          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
+          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+        }
+      },
+      "zone_config_5": {
+        "title": "Zone 5: Message Configuration",
+        "description": "Configure message IDs and fan rate limits for Zone 5",
+        "data": {
+          "id_from": "ID From (Remote Device)",
+          "id_to": "ID To (Zone Device)",
+          "min_fan_rate": "Minimum Fan Rate",
+          "max_fan_rate": "Maximum Fan Rate",
+          "back": "Back"
+        },
+        "data_description": {
+          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
+          "id_to": "Target device ID (e.g., '32:146235' for zone fan/valve)",
+          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
+          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
       },
       "pid_parameters": {
@@ -76,46 +172,122 @@
       },
       "co2_sensors": {
         "title": "CO2 Sensors",
-        "description": "Select one or more CO2 sensors. You can select multiple sensors by holding Ctrl/Cmd while clicking.",
+        "description": "Select your CO2 sensors. For multi-zone setups, you'll assign sensors to zones in the next step.",
         "data": {
           "co2_sensors": "CO2 Sensor Entities",
           "back": "Back"
         },
         "data_description": {
-          "co2_sensors": "Select one or more CO2 sensor entities (select at least one, can select multiple)"
+          "co2_sensors": "Select one or more CO2 sensor entities for air quality monitoring"
+        }
+      },
+      "co2_sensors_zones": {
+        "title": "CO2 Sensors - Zone Assignment",
+        "description": "Assign each CO2 sensor to the zone it monitors. Each sensor can monitor a different zone in your ventilation system.",
+        "data": {
+          "co2_sensor_0_zone": "{sensor_0_name} → Zone",
+          "co2_sensor_1_zone": "{sensor_1_name} → Zone", 
+          "co2_sensor_2_zone": "{sensor_2_name} → Zone",
+          "co2_sensor_3_zone": "{sensor_3_name} → Zone",
+          "co2_sensor_4_zone": "{sensor_4_name} → Zone",
+          "back": "Back"
+        },
+        "data_description": {
+          "co2_sensor_0_zone": "Choose which zone this CO2 sensor monitors",
+          "co2_sensor_1_zone": "Choose which zone this CO2 sensor monitors",
+          "co2_sensor_2_zone": "Choose which zone this CO2 sensor monitors", 
+          "co2_sensor_3_zone": "Choose which zone this CO2 sensor monitors",
+          "co2_sensor_4_zone": "Choose which zone this CO2 sensor monitors"
         }
       },
       "voc_sensors": {
-        "title": "VOC Sensors",
-        "description": "Select one or more VOC sensors. You can select multiple sensors by holding Ctrl/Cmd while clicking.",
+        "title": "VOC Sensors", 
+        "description": "Select your VOC sensors. For multi-zone setups, you'll assign sensors to zones in the next step.",
         "data": {
           "voc_sensors": "VOC Sensor Entities",
           "back": "Back"
         },
         "data_description": {
-          "voc_sensors": "Select one or more VOC sensor entities (select at least one, can select multiple)"
+          "voc_sensors": "Select one or more VOC sensor entities for air quality monitoring"
+        }
+      },
+      "voc_sensors_zones": {
+        "title": "VOC Sensors - Zone Assignment", 
+        "description": "Assign each VOC sensor to the zone it monitors. Each sensor can monitor a different zone in your ventilation system.",
+        "data": {
+          "voc_sensor_0_zone": "{sensor_0_name} → Zone",
+          "voc_sensor_1_zone": "{sensor_1_name} → Zone",
+          "voc_sensor_2_zone": "{sensor_2_name} → Zone", 
+          "voc_sensor_3_zone": "{sensor_3_name} → Zone",
+          "voc_sensor_4_zone": "{sensor_4_name} → Zone",
+          "back": "Back"
+        },
+        "data_description": {
+          "voc_sensor_0_zone": "Choose which zone this VOC sensor monitors",
+          "voc_sensor_1_zone": "Choose which zone this VOC sensor monitors",
+          "voc_sensor_2_zone": "Choose which zone this VOC sensor monitors",
+          "voc_sensor_3_zone": "Choose which zone this VOC sensor monitors", 
+          "voc_sensor_4_zone": "Choose which zone this VOC sensor monitors"
         }
       },
       "pm_sensors": {
         "title": "PM Sensors",
-        "description": "Select one or more Particulate Matter sensors. You can select multiple sensors by holding Ctrl/Cmd while clicking.",
+        "description": "Select your PM sensors. For multi-zone setups, you'll assign sensors to zones in the next step.",
         "data": {
           "pm_sensors": "PM Sensor Entities",
           "back": "Back"
         },
         "data_description": {
-          "pm_sensors": "Select one or more PM sensor entities - PM1, PM2.5, or PM10 (select at least one, can select multiple)"
+          "pm_sensors": "Select one or more PM sensor entities - PM1, PM2.5, or PM10"
+        }
+      },
+      "pm_sensors_zones": {
+        "title": "PM Sensors - Zone Assignment",
+        "description": "Assign each PM sensor to the zone it monitors. Each sensor can monitor a different zone in your ventilation system.",
+        "data": {
+          "pm_sensor_0_zone": "{sensor_0_name} → Zone",
+          "pm_sensor_1_zone": "{sensor_1_name} → Zone",
+          "pm_sensor_2_zone": "{sensor_2_name} → Zone",
+          "pm_sensor_3_zone": "{sensor_3_name} → Zone",
+          "pm_sensor_4_zone": "{sensor_4_name} → Zone",
+          "back": "Back"
+        },
+        "data_description": {
+          "pm_sensor_0_zone": "Choose which zone this PM sensor monitors",
+          "pm_sensor_1_zone": "Choose which zone this PM sensor monitors",
+          "pm_sensor_2_zone": "Choose which zone this PM sensor monitors",
+          "pm_sensor_3_zone": "Choose which zone this PM sensor monitors",
+          "pm_sensor_4_zone": "Choose which zone this PM sensor monitors"
         }
       },
       "humidity_sensors": {
         "title": "Humidity Sensors",
-        "description": "Select one or more humidity sensors. You can select multiple sensors by holding Ctrl/Cmd while clicking.",
+        "description": "Select your humidity sensors. For multi-zone setups, you'll assign sensors to zones in the next step.",
         "data": {
           "humidity_sensors": "Humidity Sensor Entities",
           "back": "Back"
         },
         "data_description": {
-          "humidity_sensors": "Select one or more humidity sensor entities (select at least one, can select multiple)"
+          "humidity_sensors": "Select one or more humidity sensor entities for humidity-based control"
+        }
+      },
+      "humidity_sensors_zones": {
+        "title": "Humidity Sensors - Zone Assignment",
+        "description": "Assign each humidity sensor to the zone it monitors. Each sensor can monitor a different zone in your ventilation system.",
+        "data": {
+          "humidity_sensor_0_zone": "{sensor_0_name} → Zone",
+          "humidity_sensor_1_zone": "{sensor_1_name} → Zone",
+          "humidity_sensor_2_zone": "{sensor_2_name} → Zone",
+          "humidity_sensor_3_zone": "{sensor_3_name} → Zone",
+          "humidity_sensor_4_zone": "{sensor_4_name} → Zone",
+          "back": "Back"
+        },
+        "data_description": {
+          "humidity_sensor_0_zone": "Choose which zone this humidity sensor monitors",
+          "humidity_sensor_1_zone": "Choose which zone this humidity sensor monitors",
+          "humidity_sensor_2_zone": "Choose which zone this humidity sensor monitors",
+          "humidity_sensor_3_zone": "Choose which zone this humidity sensor monitors",
+          "humidity_sensor_4_zone": "Choose which zone this humidity sensor monitors"
         }
       },
       "advanced": {

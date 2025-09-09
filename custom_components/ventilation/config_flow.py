@@ -13,6 +13,7 @@ from homeassistant.helpers import selector
 from homeassistant.helpers.selector import BooleanSelector
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr
 
 from .const import (
     DOMAIN,
@@ -26,6 +27,76 @@ from .const import (
 )
 _LOGGER = logging.getLogger(__name__)
 
+def get_zone_options(num_zones: int) -> list[selector.SelectOptionDict]:
+    """Generate zone selection options based on number of zones."""
+    options = []
+    for i in range(1, num_zones + 1):
+        options.append(selector.SelectOptionDict(value=str(i), label=f"Zone {i}"))
+    return options
+
+
+def get_entity_display_name(hass: HomeAssistant, entity_id: str) -> str:
+    """Get friendly display name for an entity."""
+    if hass is None:
+        return entity_id.split('.')[-1].replace('_', ' ').title()
+    
+    registry = er.async_get(hass)
+    entity_entry = registry.async_get(entity_id)
+    
+    if entity_entry and entity_entry.name:
+        return entity_entry.name
+    
+    # Fallback to state object
+    state = hass.states.get(entity_id)
+    if state and state.attributes.get("friendly_name"):
+        return state.attributes["friendly_name"]
+    
+    # Final fallback to entity_id formatted nicely
+    return entity_id.split('.')[-1].replace('_', ' ').title()
+
+async def get_device_serial_number(hass: HomeAssistant, device_id: str) -> str | None:
+    """Extract serial number from a device ID."""
+    try:
+        device_registry = dr.async_get(hass)
+        device = device_registry.async_get(device_id)
+        if device:
+            # Extract serial number from device identifiers
+            for domain, identifier in device.identifiers:
+                if isinstance(identifier, str) and len(identifier) > 6:
+                    return identifier
+    except Exception as e:
+        _LOGGER.warning(f"Failed to extract serial number from device {device_id}: {e}")
+    return None
+
+def get_device_selection_schema():
+    """Generate schema for device selection (remote, fan, number of zones)."""
+    return vol.Schema({
+        vol.Required("remote_device"): selector.DeviceSelector(
+            selector.DeviceSelectorConfig(integration="ramses_cc")
+        ),
+        vol.Required("fan_device"): selector.DeviceSelector(
+            selector.DeviceSelectorConfig(integration="ramses_cc")
+        ),
+        vol.Optional("num_zones", default=1): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=1,
+                max=5,
+                step=1,
+                mode="box"
+            )
+        ),
+    }, extra=vol.ALLOW_EXTRA)
+
+
+def get_fan_settings_schema():
+    """Generate schema for fan settings only."""
+    return vol.Schema({
+        vol.Required("min_fan_output", default=0): vol.Coerce(int),
+        vol.Required("max_fan_output", default=255): vol.Coerce(int),
+        vol.Optional("back", default=False): selector.BooleanSelector(),
+    }, extra=vol.ALLOW_EXTRA)
+
+
 def get_basic_schema():
     """Generate schema for fan settings."""
     return vol.Schema({
@@ -37,6 +108,24 @@ def get_basic_schema():
         vol.Required("fan_device"): selector.DeviceSelector(
             selector.DeviceSelectorConfig(integration="ramses_cc")
         ),
+    }, extra=vol.ALLOW_EXTRA)
+
+
+def get_zone_config_schema(zone_number: int, current_config: dict = None, remote_serial: str = "", fan_serial: str = ""):
+    """Generate schema for zone configuration (message IDs and fan settings)."""
+    if current_config is None:
+        current_config = {}
+    
+    # Use prefilled device serials if available, otherwise use current config or empty string
+    default_id_from = current_config.get("id_from", remote_serial)
+    default_id_to = current_config.get("id_to", fan_serial)
+    
+    return vol.Schema({
+        vol.Required("id_from", default=default_id_from): cv.string,
+        vol.Required("id_to", default=default_id_to): cv.string,
+        vol.Required("min_fan_rate", default=current_config.get("min_fan_rate", 0)): vol.Coerce(int),
+        vol.Required("max_fan_rate", default=current_config.get("max_fan_rate", 255)): vol.Coerce(int),
+        vol.Optional("back", default=False): selector.BooleanSelector(),
     }, extra=vol.ALLOW_EXTRA)
 
 
@@ -62,6 +151,167 @@ def get_sensor_types_schema():
     }, extra=vol.ALLOW_EXTRA)
 
 
+def get_co2_sensors_selection_schema(current_sensors=None):
+    """Generate schema for CO2 sensor selection only."""
+    default_sensors = current_sensors if current_sensors else []
+    
+    return vol.Schema({
+        vol.Required("co2_sensors", default=default_sensors): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor",
+                device_class="carbon_dioxide",
+                multiple=True,
+            )
+        ),
+        vol.Optional("back", default=False): selector.BooleanSelector(),
+    }, extra=vol.ALLOW_EXTRA)
+
+def get_voc_sensors_selection_schema(current_sensors=None):
+    """Generate schema for VOC sensor selection only."""
+    default_sensors = current_sensors if current_sensors else []
+    
+    return vol.Schema({
+        vol.Required("voc_sensors", default=default_sensors): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor",
+                device_class=["volatile_organic_compounds", "volatile_organic_compounds_parts"],
+                multiple=True,
+            )
+        ),
+        vol.Optional("back", default=False): selector.BooleanSelector(),
+    }, extra=vol.ALLOW_EXTRA)
+
+def get_pm_sensors_selection_schema(current_sensors=None):
+    """Generate schema for PM sensor selection only."""
+    default_sensors = current_sensors if current_sensors else []
+    
+    return vol.Schema({
+        vol.Required("pm_sensors", default=default_sensors): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor",
+                device_class=["pm1", "pm25", "pm10"],
+                multiple=True,
+            )
+        ),
+        vol.Optional("back", default=False): selector.BooleanSelector(),
+    }, extra=vol.ALLOW_EXTRA)
+
+def get_humidity_sensors_selection_schema(current_sensors=None):
+    """Generate schema for humidity sensor selection only."""
+    default_sensors = current_sensors if current_sensors else []
+    
+    return vol.Schema({
+        vol.Required("humidity_sensors", default=default_sensors): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor",
+                device_class="humidity",
+                multiple=True,
+            )
+        ),
+        vol.Optional("back", default=False): selector.BooleanSelector(),
+    }, extra=vol.ALLOW_EXTRA)
+
+def get_co2_sensors_zones_schema(hass: HomeAssistant, sensors: list, current_zones=None, num_zones=1):
+    """Generate schema for CO2 sensor zone assignments with sensor names."""
+    if not sensors or num_zones <= 1:
+        return None
+    
+    default_zones = current_zones if current_zones else ["1"] * len(sensors)
+    zone_options = get_zone_options(num_zones)
+    
+    schema_dict = {}
+    
+    for i, sensor in enumerate(sensors):
+        current_zone = str(default_zones[i]) if i < len(default_zones) else "1"
+        field_key = f"co2_sensor_{i}_zone"
+        
+        schema_dict[vol.Required(field_key, default=current_zone)] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=zone_options,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        )
+    
+    schema_dict[vol.Optional("back", default=False)] = selector.BooleanSelector()
+    
+    return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
+
+def get_voc_sensors_zones_schema(hass: HomeAssistant, sensors: list, current_zones=None, num_zones=1):
+    """Generate schema for VOC sensor zone assignments with sensor names."""
+    if not sensors or num_zones <= 1:
+        return None
+    
+    default_zones = current_zones if current_zones else ["1"] * len(sensors)
+    zone_options = get_zone_options(num_zones)
+    
+    schema_dict = {}
+    
+    for i, sensor in enumerate(sensors):
+        current_zone = str(default_zones[i]) if i < len(default_zones) else "1"
+        field_key = f"voc_sensor_{i}_zone"
+        
+        schema_dict[vol.Required(field_key, default=current_zone)] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=zone_options,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        )
+    
+    schema_dict[vol.Optional("back", default=False)] = selector.BooleanSelector()
+    
+    return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
+
+def get_pm_sensors_zones_schema(hass: HomeAssistant, sensors: list, current_zones=None, num_zones=1):
+    """Generate schema for PM sensor zone assignments with sensor names."""
+    if not sensors or num_zones <= 1:
+        return None
+    
+    default_zones = current_zones if current_zones else ["1"] * len(sensors)
+    zone_options = get_zone_options(num_zones)
+    
+    schema_dict = {}
+    
+    for i, sensor in enumerate(sensors):
+        current_zone = str(default_zones[i]) if i < len(default_zones) else "1"
+        field_key = f"pm_sensor_{i}_zone"
+        
+        schema_dict[vol.Required(field_key, default=current_zone)] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=zone_options,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        )
+    
+    schema_dict[vol.Optional("back", default=False)] = selector.BooleanSelector()
+    
+    return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
+
+def get_humidity_sensors_zones_schema(hass: HomeAssistant, sensors: list, current_zones=None, num_zones=1):
+    """Generate schema for humidity sensor zone assignments with sensor names."""
+    if not sensors or num_zones <= 1:
+        return None
+    
+    default_zones = current_zones if current_zones else ["1"] * len(sensors)
+    zone_options = get_zone_options(num_zones)
+    
+    schema_dict = {}
+    
+    for i, sensor in enumerate(sensors):
+        current_zone = str(default_zones[i]) if i < len(default_zones) else "1"
+        field_key = f"humidity_sensor_{i}_zone"
+        
+        schema_dict[vol.Required(field_key, default=current_zone)] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=zone_options,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        )
+    
+    schema_dict[vol.Optional("back", default=False)] = selector.BooleanSelector()
+    
+    return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
+
+
 def get_co2_sensors_schema(hass: HomeAssistant = None, current_sensors=None):
     """Generate schema for CO2 sensors with multiple entity selector."""
     # Get current sensors as default
@@ -77,6 +327,44 @@ def get_co2_sensors_schema(hass: HomeAssistant = None, current_sensors=None):
         ),
         vol.Optional("back", default=False): selector.BooleanSelector(),
     }
+    
+    return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
+
+
+def get_voc_sensors_with_zones_schema(hass: HomeAssistant = None, current_sensors=None, current_zones=None, num_zones=1):
+    """Generate schema for VOC sensors with individual zone selectors."""
+    # Get current sensors and zones as defaults
+    default_sensors = current_sensors if current_sensors else []
+    default_zones = current_zones if current_zones else []
+    
+    # Create sensor selector
+    schema_dict = {
+        vol.Required("voc_sensors", default=default_sensors): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor",
+                device_class=["volatile_organic_compounds", "volatile_organic_compounds_parts"],
+                multiple=True,
+            )
+        ),
+    }
+    
+    # Add individual zone selectors for each currently selected sensor if multiple zones
+    if num_zones > 1 and default_sensors:
+        zone_options = get_zone_options(num_zones)
+        
+        for i, sensor in enumerate(default_sensors):
+            # Get sensor friendly name for the selector label
+            sensor_name = get_entity_display_name(hass, sensor)
+            current_zone = str(default_zones[i]) if i < len(default_zones) else "1"
+            
+            schema_dict[vol.Required(f"voc_sensor_{i}_zone", default=current_zone)] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=zone_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+    
+    schema_dict[vol.Optional("back", default=False)] = selector.BooleanSelector()
     
     return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
 
@@ -100,6 +388,44 @@ def get_voc_sensors_schema(hass: HomeAssistant = None, current_sensors=None):
     return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
 
 
+def get_pm_sensors_with_zones_schema(hass: HomeAssistant = None, current_sensors=None, current_zones=None, num_zones=1):
+    """Generate schema for PM sensors with individual zone selectors."""
+    # Get current sensors and zones as defaults
+    default_sensors = current_sensors if current_sensors else []
+    default_zones = current_zones if current_zones else []
+    
+    # Create sensor selector
+    schema_dict = {
+        vol.Required("pm_sensors", default=default_sensors): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor",
+                device_class=["pm1", "pm10", "pm25"],
+                multiple=True,
+            )
+        ),
+    }
+    
+    # Add individual zone selectors for each currently selected sensor if multiple zones
+    if num_zones > 1 and default_sensors:
+        zone_options = get_zone_options(num_zones)
+        
+        for i, sensor in enumerate(default_sensors):
+            # Get sensor friendly name for the selector label
+            sensor_name = get_entity_display_name(hass, sensor)
+            current_zone = str(default_zones[i]) if i < len(default_zones) else "1"
+            
+            schema_dict[vol.Required(f"pm_sensor_{i}_zone", default=current_zone)] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=zone_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+    
+    schema_dict[vol.Optional("back", default=False)] = selector.BooleanSelector()
+    
+    return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
+
+
 def get_pm_sensors_schema(hass: HomeAssistant = None, current_sensors=None):
     """Generate schema for Particulate Matter sensors with multiple entity selector."""
     # Get current sensors as default
@@ -115,6 +441,44 @@ def get_pm_sensors_schema(hass: HomeAssistant = None, current_sensors=None):
         ),
         vol.Optional("back", default=False): selector.BooleanSelector(),
     }
+    
+    return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
+
+
+def get_humidity_sensors_with_zones_schema(hass: HomeAssistant = None, current_sensors=None, current_zones=None, num_zones=1):
+    """Generate schema for humidity sensors with individual zone selectors."""
+    # Get current sensors and zones as defaults
+    default_sensors = current_sensors if current_sensors else []
+    default_zones = current_zones if current_zones else []
+    
+    # Create sensor selector
+    schema_dict = {
+        vol.Required("humidity_sensors", default=default_sensors): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor",
+                device_class="humidity",
+                multiple=True,
+            )
+        ),
+    }
+    
+    # Add individual zone selectors for each currently selected sensor if multiple zones
+    if num_zones > 1 and default_sensors:
+        zone_options = get_zone_options(num_zones)
+        
+        for i, sensor in enumerate(default_sensors):
+            # Get sensor friendly name for the selector label
+            sensor_name = get_entity_display_name(hass, sensor)
+            current_zone = str(default_zones[i]) if i < len(default_zones) else "1"
+            
+            schema_dict[vol.Required(f"humidity_sensor_{i}_zone", default=current_zone)] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=zone_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+    
+    schema_dict[vol.Optional("back", default=False)] = selector.BooleanSelector()
     
     return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
 
@@ -170,6 +534,46 @@ def get_air_quality_indices_schema(sensor_types):
     return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
 
 
+async def validate_device_selection_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+    """Validate the device selection input."""
+    
+    # Validate remote_device is provided
+    if not data.get("remote_device"):
+        raise InvalidEntity("Remote device must be selected")
+    
+    # Validate fan_device is provided
+    if not data.get("fan_device"):
+        raise InvalidEntity("Fan device must be selected")
+    
+    # Validate num_zones - use default if not provided
+    num_zones = data.get("num_zones", 1)
+    try:
+        zones_int = int(num_zones)
+        if not (1 <= zones_int <= 5):
+            raise InvalidEntity("Number of zones must be between 1 and 5")
+    except (ValueError, TypeError):
+        raise InvalidEntity("Number of zones must be a valid number")
+    
+    return {"title": "PID Ventilation Control"}
+
+
+async def validate_fan_settings_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+    """Validate the fan settings input."""
+    
+    # Validate fan output ranges
+    if not (0 <= data["min_fan_output"] <= 254):
+        raise InvalidRange("Minimum fan output must be between 0 and 254")
+    
+    if not (1 <= data["max_fan_output"] <= 255):
+        raise InvalidRange("Maximum fan output must be between 1 and 255")
+    
+    # Validate min < max fan output
+    if data["min_fan_output"] >= data["max_fan_output"]:
+        raise InvalidRange("Minimum fan output must be less than maximum fan output")
+
+    return {"title": "PID Ventilation Control"}
+
+
 async def validate_basic_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the fan settings input."""
     
@@ -217,6 +621,43 @@ async def validate_sensor_types_input(hass: HomeAssistant, data: dict[str, Any])
         raise InvalidSensor("At least one sensor type must be selected")
     
     return {"title": "PID Ventilation Control"}
+
+
+async def validate_zone_config_input(hass: HomeAssistant, data: dict[str, Any], zone_number: int) -> dict[str, Any]:
+    """Validate the zone configuration input."""
+    
+    # Validate ID_from format (should be device ID like "29:162275")
+    id_from = data.get("id_from", "").strip()
+    if not id_from:
+        raise InvalidZoneConfig(f"Zone {zone_number} ID_from is required")
+    
+    # Basic format validation for ID_from
+    if ":" not in id_from or len(id_from.split(":")) != 2:
+        raise InvalidZoneConfig(f"Zone {zone_number} ID_from must be in format 'XX:XXXXXX' (e.g., '29:162275')")
+    
+    # Validate ID_to format (should be device ID like "32:146231")
+    id_to = data.get("id_to", "").strip()
+    if not id_to:
+        raise InvalidZoneConfig(f"Zone {zone_number} ID_to is required")
+    
+    # Basic format validation for ID_to
+    if ":" not in id_to or len(id_to.split(":")) != 2:
+        raise InvalidZoneConfig(f"Zone {zone_number} ID_to must be in format 'XX:XXXXXX' (e.g., '32:146231')")
+    
+    # Validate fan rate ranges
+    min_fan = data.get("min_fan_rate", 0)
+    max_fan = data.get("max_fan_rate", 255)
+    
+    if not (0 <= min_fan <= 255):
+        raise InvalidZoneConfig(f"Zone {zone_number} minimum fan rate must be between 0 and 255")
+    
+    if not (0 <= max_fan <= 255):
+        raise InvalidZoneConfig(f"Zone {zone_number} maximum fan rate must be between 0 and 255")
+    
+    if min_fan >= max_fan:
+        raise InvalidZoneConfig(f"Zone {zone_number} minimum fan rate must be less than maximum fan rate")
+    
+    return {"title": f"Zone {zone_number} Configuration"}
 
 
 async def validate_sensors_input(hass: HomeAssistant, data: dict[str, Any], sensor_type: str) -> dict[str, Any]:
@@ -400,6 +841,46 @@ def validate_ki_times(ki_times_str: str) -> list[int]:
         raise InvalidKiTimes(f"Invalid Ki times format: {str(e)}")
 
 
+def validate_sensor_zone_assignment(sensors: list[str], zones_str: str, num_zones: int, sensor_type: str) -> list[int]:
+    """Validate and parse zone assignments for sensors."""
+    if not zones_str.strip():
+        # Default to zone 1 for all sensors
+        return [1] * len(sensors)
+    
+    try:
+        # Split by comma and strip whitespace
+        zone_parts = [part.strip() for part in zones_str.split(",")]
+        
+        # Check if we have the same number of zones as sensors
+        if len(zone_parts) != len(sensors):
+            raise InvalidRange(f"{sensor_type} sensors ({len(sensors)}) and zones ({len(zone_parts)}) count mismatch. Please provide one zone number per sensor.")
+        
+        # Convert to integers and validate range
+        zones = []
+        for i, part in enumerate(zone_parts):
+            if not part:
+                raise InvalidRange(f"Zone assignment {i+1} for {sensor_type} sensor is empty")
+            
+            try:
+                zone_value = int(part)
+            except ValueError:
+                raise InvalidRange(f"Zone assignment '{part}' for {sensor_type} sensor {i+1} is not a valid number")
+            
+            if not (1 <= zone_value <= num_zones):
+                raise InvalidRange(f"Zone assignment '{zone_value}' for {sensor_type} sensor {i+1} must be between 1 and {num_zones}")
+            
+            zones.append(zone_value)
+        
+        return zones
+        
+    except InvalidRange:
+        # Re-raise our custom exception as-is
+        raise
+    except Exception as e:
+        # Catch any other unexpected errors
+        raise InvalidRange(f"Invalid {sensor_type} zone assignments: {str(e)}")
+
+
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for PID Ventilation Control."""
 
@@ -409,8 +890,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         self._data = {}
         self._sensor_types = {}
+        self._num_zones = 1  # Track number of zones (1 if no valves, else number of valves)
+        self._current_zone = 1  # Track which zone is currently being configured
+        # Store zone assignments for each sensor type
+        self._sensor_zones = {
+            "co2_sensors": [],
+            "voc_sensors": [],
+            "pm_sensors": [],
+            "humidity_sensors": [],
+        }
         # Track which specific sensor classes were selected
         self._sensor_classes = {
+            "co2": False,
             "pm1": False,
             "pm25": False,
             "pm10": False,
@@ -428,7 +919,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle the initial step - fan settings."""
+        """Handle the initial step - device selection."""
         errors: dict[str, str] = {}
         
         # Check if already configured (only allow one instance)
@@ -437,17 +928,174 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         
         if user_input is not None:
             try:
+                # Validate the device selection input
+                info = await validate_device_selection_input(self.hass, user_input)
+                
+                # Store device selection data
+                self._data.update(user_input)
+                
+                # Get number of zones from user selection
+                self._num_zones = user_input.get("num_zones", 1)
+                if isinstance(self._num_zones, str):
+                    self._num_zones = int(self._num_zones)
+                
+                # Extract device serial numbers for prefilling zone configs
+                remote_serial = await get_device_serial_number(self.hass, user_input["remote_device"])
+                fan_serial = await get_device_serial_number(self.hass, user_input["fan_device"])
+                
+                # Store serial numbers for later use in zone configurations
+                self._data["remote_serial"] = remote_serial or ""
+                self._data["fan_serial"] = fan_serial or ""
+                
+                _LOGGER.info(f"Device selection: {self._num_zones} zones, Remote: {remote_serial}, Fan: {fan_serial}")
+                
+                # Initialize zone configurations
+                if "zone_configs" not in self._data:
+                    self._data["zone_configs"] = {}
+                
+                # Go to first zone configuration step
+                return await self.async_step_zone_config_1()
+                
+            except InvalidEntity as err:
+                # Determine which device field had the error
+                error_msg = str(err).lower()
+                if "remote" in error_msg:
+                    errors["remote_device"] = str(err)
+                elif "fan" in error_msg:
+                    errors["fan_device"] = str(err)
+                else:
+                    errors["base"] = str(err)
+                _LOGGER.warning(f"Invalid entity: {err}")
+            except Exception as err:  # pylint: disable=broad-except
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in device selection: {err}", exc_info=True)
+
+        # Show the device selection form
+        return self.async_show_form(
+            step_id="user",
+            data_schema=get_device_selection_schema(),
+            errors=errors,
+        )
+
+    async def async_step_zone_config_1(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle zone 1 configuration step."""
+        return await self._async_step_zone_config(1, user_input)
+
+    async def async_step_zone_config_2(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle zone 2 configuration step."""
+        return await self._async_step_zone_config(2, user_input)
+
+    async def async_step_zone_config_3(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle zone 3 configuration step."""
+        return await self._async_step_zone_config(3, user_input)
+
+    async def async_step_zone_config_4(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle zone 4 configuration step."""
+        return await self._async_step_zone_config(4, user_input)
+
+    async def async_step_zone_config_5(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle zone 5 configuration step."""
+        return await self._async_step_zone_config(5, user_input)
+
+    async def _async_step_zone_config(
+        self, zone_number: int, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle zone configuration step for any zone number."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            # Check for back button
+            if user_input.get("back"):
+                if zone_number == 1:
+                    return await self.async_step_user()
+                else:
+                    # Go back to previous zone configuration
+                    prev_zone = zone_number - 1
+                    return await getattr(self, f"async_step_zone_config_{prev_zone}")()
+                    
+            try:
+                # Validate the zone configuration input
+                info = await validate_zone_config_input(self.hass, user_input, zone_number)
+                
+                # Store zone configuration data
+                if "zone_configs" not in self._data:
+                    self._data["zone_configs"] = {}
+                self._data["zone_configs"][zone_number] = {
+                    "id_from": user_input["id_from"],
+                    "id_to": user_input["id_to"],
+                    "min_fan_rate": user_input["min_fan_rate"],
+                    "max_fan_rate": user_input["max_fan_rate"],
+                }
+                
+                # Check if we need to configure more zones
+                if zone_number < self._num_zones:
+                    # Go to next zone configuration
+                    next_zone = zone_number + 1
+                    return await getattr(self, f"async_step_zone_config_{next_zone}")()
+                else:
+                    # All zones configured, go to sensor type selection
+                    return await self.async_step_sensor_types()
+                    
+            except InvalidZoneConfig as err:
+                # Provide specific error messages based on validation
+                error_msg = str(err).lower()
+                if "id_from" in error_msg:
+                    errors["id_from"] = str(err)
+                elif "id_to" in error_msg:
+                    errors["id_to"] = str(err)
+                elif "min_fan" in error_msg:
+                    errors["min_fan_rate"] = str(err)
+                elif "max_fan" in error_msg:
+                    errors["max_fan_rate"] = str(err)
+                else:
+                    errors["base"] = str(err)
+                _LOGGER.warning(f"Invalid zone config: {err}")
+            except Exception as err:  # pylint: disable=broad-except
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in zone config step: {err}", exc_info=True)
+
+        # Show the zone configuration form
+        current_config = self._data.get("zone_configs", {}).get(zone_number, {})
+        remote_serial = self._data.get("remote_serial", "")
+        fan_serial = self._data.get("fan_serial", "")
+        
+        return self.async_show_form(
+            step_id=f"zone_config_{zone_number}",
+            data_schema=get_zone_config_schema(zone_number, current_config, remote_serial, fan_serial),
+            errors=errors,
+        )
+
+    async def async_step_fan_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the fan settings step."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            # Check for back button
+            if user_input.get("back"):
+                return await self.async_step_user()
+                
+            try:
                 # Validate the fan settings input
-                info = await validate_basic_input(self.hass, user_input)
+                info = await validate_fan_settings_input(self.hass, user_input)
                 
                 # Store fan settings data
                 self._data.update(user_input)
                 
                 # Go to sensor type selection step
                 return await self.async_step_sensor_types()
-            except InvalidEntity as err:
-                errors["remote_device"] = str(err)
-                _LOGGER.warning(f"Invalid entity: {err}")
+                
             except InvalidRange as err:
                 # Provide specific error messages based on validation
                 error_msg = str(err).lower()
@@ -460,12 +1108,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.warning(f"Invalid range: {err}")
             except Exception as err:  # pylint: disable=broad-except
                 errors["base"] = "unknown"
-                _LOGGER.error(f"Unexpected error in config flow: {err}", exc_info=True)
+                _LOGGER.error(f"Unexpected error in fan settings: {err}", exc_info=True)
 
         # Show the fan settings form
         return self.async_show_form(
-            step_id="user",
-            data_schema=get_basic_schema(),
+            step_id="fan_settings",
+            data_schema=get_fan_settings_schema(),
             errors=errors,
         )
 
@@ -498,6 +1146,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # Store sensor type selections
                 self._data.update(self._sensor_types)
                 
+                # Store number of zones
+                self._data["num_zones"] = self._num_zones
+                
                 # Count total sensors for title
                 total_sensors = 0
                 sensor_types = []
@@ -510,9 +1161,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if self._data.get("pm_sensors"):
                     total_sensors += len(self._data["pm_sensors"])
                     sensor_types.append("PM")
+                if self._data.get("humidity_sensors"):
+                    total_sensors += len(self._data["humidity_sensors"])
+                    sensor_types.append("Humidity")
 
                 sensor_types_str = "/".join(sensor_types) if sensor_types else "sensors"
-                title = f"PID Ventilation Control ({total_sensors} {sensor_types_str} sensors)"
+                zones_str = f"{self._num_zones} zone{'s' if self._num_zones > 1 else ''}"
+                title = f"PID Ventilation Control ({total_sensors} {sensor_types_str} sensors, {zones_str})"
 
                 return self.async_create_entry(title=title, data=self._data)
             except InvalidRange as err:
@@ -550,7 +1205,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Check for back button
             if user_input.get("back"):
-                return await self.async_step_user()
+                return await self.async_step_fan_settings()
                 
             try:
                 # Validate the sensor types selection
@@ -596,13 +1251,66 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Check for back button
             if user_input.get("back"):
                 return await self.async_step_sensor_types()
-                
+            
             try:
                 # Validate the sensor input
                 info = await validate_sensors_input(self.hass, user_input, "co2")
                 
                 # Store CO2 sensors
-                self._data["co2_sensors"] = user_input["co2_sensors"]
+                selected_sensors = user_input["co2_sensors"]
+                self._data["co2_sensors"] = selected_sensors
+                
+                # Handle zone assignments
+                if self._num_zones > 1 and selected_sensors:
+                    # For multi-zone, check if we have zone data
+                    has_zone_data = any(key.startswith("co2_sensor_") and key.endswith("_zone") 
+                                      for key in user_input.keys())
+                    
+                    if has_zone_data:
+                        # We have zone assignments - process them
+                        zones = []
+                        for i in range(len(selected_sensors)):
+                            zone_key = f"co2_sensor_{i}_zone"
+                            zone_value = user_input.get(zone_key, "1")
+                            try:
+                                zones.append(int(zone_value))
+                            except ValueError:
+                                zones.append(1)
+                        
+                        self._sensor_zones["co2_sensors"] = zones
+                        self._data["co2_sensor_zones"] = zones
+                    else:
+                        # No zone data yet - show zone assignment form
+                        current_zones = self._sensor_zones.get("co2_sensors", [])
+                        zones_schema = get_co2_sensors_zones_schema(
+                            self.hass, selected_sensors, current_zones, self._num_zones
+                        )
+                        
+                        if zones_schema:
+                            # Create placeholders with sensor names
+                            placeholders = {
+                                "sensor_count": str(len(selected_sensors)),
+                                "zone_count": str(self._num_zones)
+                            }
+                            
+                            # Add sensor names for translation placeholders
+                            for i, sensor in enumerate(selected_sensors):
+                                sensor_name = get_entity_display_name(self.hass, sensor)
+                                placeholders[f"sensor_{i}_name"] = sensor_name
+                            
+                            return self.async_show_form(
+                                step_id="co2_sensors_zones", 
+                                data_schema=zones_schema,
+                                description_placeholders=placeholders
+                            )
+                else:
+                    # Single zone or no sensors - assign all to zone 1
+                    zones = [1] * len(selected_sensors)
+                    self._sensor_zones["co2_sensors"] = zones
+                    self._data["co2_sensor_zones"] = zones
+                
+                # Detect CO2 device classes selected
+                self._update_co2_classes(selected_sensors)
                 
                 # Go to next sensor type or air quality indices step
                 if self._sensor_types.get("use_voc_sensors"):
@@ -617,16 +1325,96 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except InvalidSensor as err:
                 errors["co2_sensors"] = "invalid_sensor"
                 _LOGGER.warning(f"Invalid CO2 sensor: {err}")
+            except InvalidRange as err:
+                errors["co2_sensor_zones"] = str(err)
+                _LOGGER.warning(f"Invalid CO2 sensor zones: {err}")
             except Exception as err:  # pylint: disable=broad-except
                 errors["base"] = "unknown"
                 _LOGGER.error(f"Unexpected error in CO2 sensor step: {err}", exc_info=True)
 
-        # Show the CO2 sensor selection form
+        # Show the CO2 sensor selection form (phase 1)
+        current_sensors = self._data.get("co2_sensors", [])
         return self.async_show_form(
             step_id="co2_sensors",
-            data_schema=get_co2_sensors_schema(self.hass),
+            data_schema=get_co2_sensors_selection_schema(current_sensors),
             errors=errors,
         )
+
+    async def async_step_co2_sensors_zones(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the CO2 sensor zone assignment step."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            # Check for back button
+            if user_input.get("back"):
+                return await self.async_step_co2_sensors()
+                
+            try:
+                # Process zone assignments
+                selected_sensors = self._data.get("co2_sensors", [])
+                zones = []
+                for i in range(len(selected_sensors)):
+                    zone_key = f"co2_sensor_{i}_zone"
+                    zone_value = user_input.get(zone_key, "1")
+                    try:
+                        zones.append(int(zone_value))
+                    except ValueError:
+                        zones.append(1)
+                
+                # Store zone assignments
+                self._sensor_zones["co2_sensors"] = zones
+                self._data["co2_sensor_zones"] = zones
+                
+                # Detect CO2 device classes selected
+                self._update_co2_classes(selected_sensors)
+                
+                # Go to next sensor type or air quality indices step
+                if self._sensor_types.get("use_voc_sensors"):
+                    return await self.async_step_voc_sensors()
+                elif self._sensor_types.get("use_pm_sensors"):
+                    return await self.async_step_pm_sensors()
+                elif self._sensor_types.get("use_humidity_sensors"):
+                    return await self.async_step_humidity_sensors()
+                else:
+                    return await self.async_step_air_quality_indices()
+                    
+            except InvalidRange as err:
+                errors["co2_sensor_zones"] = str(err)
+                _LOGGER.warning(f"Invalid CO2 sensor zones: {err}")
+            except Exception as err:  # pylint: disable=broad-except
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in CO2 zones step: {err}", exc_info=True)
+
+        # Show the zone assignment form
+        selected_sensors = self._data.get("co2_sensors", [])
+        current_zones = self._sensor_zones.get("co2_sensors", [])
+        zones_schema = get_co2_sensors_zones_schema(
+            self.hass, selected_sensors, current_zones, self._num_zones
+        )
+        
+        if zones_schema:
+            # Create placeholders with sensor names
+            placeholders = {
+                "sensor_count": str(len(selected_sensors)),
+                "zone_count": str(self._num_zones)
+            }
+            
+            # Add sensor names for translation placeholders
+            for i, sensor in enumerate(selected_sensors):
+                sensor_name = get_entity_display_name(self.hass, sensor)
+                placeholders[f"sensor_{i}_name"] = sensor_name
+            
+            return self.async_show_form(
+                step_id="co2_sensors_zones",
+                data_schema=zones_schema,
+                description_placeholders=placeholders,
+                errors=errors,
+            )
+        
+        # Fallback - should not happen
+        return await self.async_step_voc_sensors()
 
     async def async_step_voc_sensors(
         self, user_input: dict[str, Any] | None = None
@@ -637,9 +1425,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Check for back button
             if user_input.get("back"):
-                # Go back to CO2 step if it was selected, otherwise to sensor_types
+                # Go back to CO2 zones step if CO2 was selected, otherwise to sensor_types
                 if self._sensor_types.get("use_co2_sensors"):
-                    return await self.async_step_co2_sensors()
+                    return await self.async_step_co2_sensors_zones()
                 else:
                     return await self.async_step_sensor_types()
                 
@@ -648,10 +1436,72 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 info = await validate_sensors_input(self.hass, user_input, "voc")
                 
                 # Store VOC sensors
-                self._data["voc_sensors"] = user_input["voc_sensors"]
+                selected_sensors = user_input["voc_sensors"]
+                self._data["voc_sensors"] = selected_sensors
                 
                 # Detect VOC device classes selected
-                self._update_voc_classes(user_input["voc_sensors"])
+                self._update_voc_classes(selected_sensors)
+                
+                # If multiple zones, go to zone assignment, otherwise assign all to zone 1
+                if self._num_zones > 1 and selected_sensors:
+                    # Initialize zones for newly selected sensors
+                    self._sensor_zones["voc_sensors"] = [1] * len(selected_sensors)
+                    return await self.async_step_voc_sensors_zones()
+                else:
+                    # Single zone or no sensors, assign all to zone 1
+                    zones = [1] * len(selected_sensors)
+                    self._sensor_zones["voc_sensors"] = zones
+                    self._data["voc_sensor_zones"] = zones
+                    
+                    # Go to next sensor type or air quality indices step
+                    if self._sensor_types.get("use_pm_sensors"):
+                        return await self.async_step_pm_sensors()
+                    elif self._sensor_types.get("use_humidity_sensors"):
+                        return await self.async_step_humidity_sensors()
+                    else:
+                        return await self.async_step_air_quality_indices()
+                        
+            except InvalidSensor as err:
+                errors["voc_sensors"] = "invalid_sensor"
+                _LOGGER.warning(f"Invalid VOC sensor: {err}")
+            except Exception as err:  # pylint: disable=broad-except
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in VOC sensor step: {err}", exc_info=True)
+
+        # Show the VOC sensor selection form (phase 1)
+        current_sensors = self._data.get("voc_sensors", [])
+        return self.async_show_form(
+            step_id="voc_sensors",
+            data_schema=get_voc_sensors_selection_schema(current_sensors),
+            errors=errors,
+        )
+
+    async def async_step_voc_sensors_zones(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the VOC sensor zone assignment step."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            # Check for back button
+            if user_input.get("back"):
+                return await self.async_step_voc_sensors()
+                
+            try:
+                # Process zone assignments
+                selected_sensors = self._data.get("voc_sensors", [])
+                zones = []
+                for i in range(len(selected_sensors)):
+                    zone_key = f"voc_sensor_{i}_zone"
+                    zone_value = user_input.get(zone_key, "1")
+                    try:
+                        zones.append(int(zone_value))
+                    except ValueError:
+                        zones.append(1)
+                
+                # Store zone assignments
+                self._sensor_zones["voc_sensors"] = zones
+                self._data["voc_sensor_zones"] = zones
                 
                 # Go to next sensor type or air quality indices step
                 if self._sensor_types.get("use_pm_sensors"):
@@ -661,19 +1511,41 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     return await self.async_step_air_quality_indices()
                     
-            except InvalidSensor as err:
-                errors["voc_sensors"] = "invalid_sensor"
-                _LOGGER.warning(f"Invalid VOC sensor: {err}")
+            except InvalidRange as err:
+                errors["voc_sensor_zones"] = str(err)
+                _LOGGER.warning(f"Invalid VOC sensor zones: {err}")
             except Exception as err:  # pylint: disable=broad-except
                 errors["base"] = "unknown"
-                _LOGGER.error(f"Unexpected error in VOC sensor step: {err}", exc_info=True)
+                _LOGGER.error(f"Unexpected error in VOC zones step: {err}", exc_info=True)
 
-        # Show the VOC sensor selection form
-        return self.async_show_form(
-            step_id="voc_sensors",
-            data_schema=get_voc_sensors_schema(self.hass),
-            errors=errors,
+        # Show the zone assignment form
+        selected_sensors = self._data.get("voc_sensors", [])
+        current_zones = self._sensor_zones.get("voc_sensors", [])
+        zones_schema = get_voc_sensors_zones_schema(
+            self.hass, selected_sensors, current_zones, self._num_zones
         )
+        
+        if zones_schema:
+            # Create placeholders with sensor names
+            placeholders = {
+                "sensor_count": str(len(selected_sensors)),
+                "zone_count": str(self._num_zones)
+            }
+            
+            # Add sensor names for translation placeholders
+            for i, sensor in enumerate(selected_sensors):
+                sensor_name = get_entity_display_name(self.hass, sensor)
+                placeholders[f"sensor_{i}_name"] = sensor_name
+            
+            return self.async_show_form(
+                step_id="voc_sensors_zones",
+                data_schema=zones_schema,
+                description_placeholders=placeholders,
+                errors=errors,
+            )
+        
+        # Fallback - should not happen
+        return await self.async_step_pm_sensors()
 
     async def async_step_pm_sensors(
         self, user_input: dict[str, Any] | None = None
@@ -684,11 +1556,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Check for back button
             if user_input.get("back"):
-                # Go back to VOC step if it was selected, else CO2 step if selected, else sensor_types
+                # Go back to VOC zones step if VOC was selected, else CO2 zones step if CO2 was selected, else sensor_types
                 if self._sensor_types.get("use_voc_sensors"):
-                    return await self.async_step_voc_sensors()
+                    return await self.async_step_voc_sensors_zones()
                 elif self._sensor_types.get("use_co2_sensors"):
-                    return await self.async_step_co2_sensors()
+                    return await self.async_step_co2_sensors_zones()
                 else:
                     return await self.async_step_sensor_types()
                 
@@ -697,17 +1569,29 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 info = await validate_sensors_input(self.hass, user_input, "pm")
                 
                 # Store PM sensors
-                self._data["pm_sensors"] = user_input["pm_sensors"]
+                selected_sensors = user_input["pm_sensors"]
+                self._data["pm_sensors"] = selected_sensors
                 
                 # Detect PM device classes selected
-                self._update_pm_classes(user_input["pm_sensors"])
+                self._update_pm_classes(selected_sensors)
                 
-                # Go to next sensor type or air quality indices step
-                if self._sensor_types.get("use_humidity_sensors"):
-                    return await self.async_step_humidity_sensors()
+                # If multiple zones, go to zone assignment, otherwise assign all to zone 1
+                if self._num_zones > 1 and selected_sensors:
+                    # Initialize zones for newly selected sensors
+                    self._sensor_zones["pm_sensors"] = [1] * len(selected_sensors)
+                    return await self.async_step_pm_sensors_zones()
                 else:
-                    return await self.async_step_air_quality_indices()
+                    # Single zone or no sensors, assign all to zone 1
+                    zones = [1] * len(selected_sensors)
+                    self._sensor_zones["pm_sensors"] = zones
+                    self._data["pm_sensor_zones"] = zones
                     
+                    # Go to next sensor type or air quality indices step
+                    if self._sensor_types.get("use_humidity_sensors"):
+                        return await self.async_step_humidity_sensors()
+                    else:
+                        return await self.async_step_air_quality_indices()
+                        
             except InvalidSensor as err:
                 errors["pm_sensors"] = "invalid_sensor"
                 _LOGGER.warning(f"Invalid PM sensor: {err}")
@@ -715,12 +1599,82 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
                 _LOGGER.error(f"Unexpected error in PM sensor step: {err}", exc_info=True)
 
-        # Show the PM sensor selection form
+        # Show the PM sensor selection form (phase 1)
+        current_sensors = self._data.get("pm_sensors", [])
         return self.async_show_form(
             step_id="pm_sensors",
-            data_schema=get_pm_sensors_schema(self.hass),
+            data_schema=get_pm_sensors_selection_schema(current_sensors),
             errors=errors,
         )
+
+    async def async_step_pm_sensors_zones(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the PM sensor zone assignment step."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            # Check for back button
+            if user_input.get("back"):
+                return await self.async_step_pm_sensors()
+                
+            try:
+                # Process zone assignments
+                selected_sensors = self._data.get("pm_sensors", [])
+                zones = []
+                for i in range(len(selected_sensors)):
+                    zone_key = f"pm_sensor_{i}_zone"
+                    zone_value = user_input.get(zone_key, "1")
+                    try:
+                        zones.append(int(zone_value))
+                    except ValueError:
+                        zones.append(1)
+                
+                # Store zone assignments
+                self._sensor_zones["pm_sensors"] = zones
+                self._data["pm_sensor_zones"] = zones
+                
+                # Go to next sensor type or air quality indices step
+                if self._sensor_types.get("use_humidity_sensors"):
+                    return await self.async_step_humidity_sensors()
+                else:
+                    return await self.async_step_air_quality_indices()
+                    
+            except InvalidRange as err:
+                errors["pm_sensor_zones"] = str(err)
+                _LOGGER.warning(f"Invalid PM sensor zones: {err}")
+            except Exception as err:  # pylint: disable=broad-except
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in PM zones step: {err}", exc_info=True)
+
+        # Show the zone assignment form
+        selected_sensors = self._data.get("pm_sensors", [])
+        current_zones = self._sensor_zones.get("pm_sensors", [])
+        zones_schema = get_pm_sensors_zones_schema(
+            self.hass, selected_sensors, current_zones, self._num_zones
+        )
+        
+        if zones_schema:
+            # Create placeholders with sensor names
+            placeholders = {
+                "sensor_count": str(len(selected_sensors)),
+                "zone_count": str(self._num_zones)
+            }
+            
+            # Add sensor names for translation placeholders
+            for i, sensor in enumerate(selected_sensors):
+                sensor_name = get_entity_display_name(self.hass, sensor)
+                placeholders[f"sensor_{i}_name"] = sensor_name
+            
+            return self.async_show_form(
+                step_id="pm_sensors_zones",
+                data_schema=zones_schema,
+                description_placeholders=placeholders,
+                errors=errors,
+            )
+        
+        # Fallback - should not happen
+        return await self.async_step_humidity_sensors()
 
     async def async_step_humidity_sensors(
         self, user_input: dict[str, Any] | None = None
@@ -731,13 +1685,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Check for back button
             if user_input.get("back"):
-                # Go back to PM step if it was selected, else VOC step if selected, else CO2 step if selected, else sensor_types
+                # Go back to PM zones step if PM was selected, else VOC zones step if VOC was selected, else CO2 zones step if CO2 was selected, else sensor_types
                 if self._sensor_types.get("use_pm_sensors"):
-                    return await self.async_step_pm_sensors()
+                    return await self.async_step_pm_sensors_zones()
                 elif self._sensor_types.get("use_voc_sensors"):
-                    return await self.async_step_voc_sensors()
+                    return await self.async_step_voc_sensors_zones()
                 elif self._sensor_types.get("use_co2_sensors"):
-                    return await self.async_step_co2_sensors()
+                    return await self.async_step_co2_sensors_zones()
                 else:
                     return await self.async_step_sensor_types()
                 
@@ -746,13 +1700,25 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 info = await validate_sensors_input(self.hass, user_input, "humidity")
                 
                 # Store Humidity sensors
-                self._data["humidity_sensors"] = user_input["humidity_sensors"]
+                selected_sensors = user_input["humidity_sensors"]
+                self._data["humidity_sensors"] = selected_sensors
                 
                 # Detect Humidity device classes selected
-                self._update_humidity_classes(user_input["humidity_sensors"])
+                self._update_humidity_classes(selected_sensors)
                 
-                # Go to air quality indices step
-                return await self.async_step_air_quality_indices()
+                # If multiple zones, go to zone assignment, otherwise assign all to zone 1
+                if self._num_zones > 1 and selected_sensors:
+                    # Initialize zones for newly selected sensors
+                    self._sensor_zones["humidity_sensors"] = [1] * len(selected_sensors)
+                    return await self.async_step_humidity_sensors_zones()
+                else:
+                    # Single zone or no sensors, assign all to zone 1
+                    zones = [1] * len(selected_sensors)
+                    self._sensor_zones["humidity_sensors"] = zones
+                    self._data["humidity_sensor_zones"] = zones
+                    
+                    # Go to air quality indices step
+                    return await self.async_step_air_quality_indices()
                     
             except InvalidSensor as err:
                 errors["humidity_sensors"] = "invalid_sensor"
@@ -761,12 +1727,79 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
                 _LOGGER.error(f"Unexpected error in Humidity sensor step: {err}", exc_info=True)
 
-        # Show the Humidity sensor selection form
+        # Show the Humidity sensor selection form (phase 1)
+        current_sensors = self._data.get("humidity_sensors", [])
         return self.async_show_form(
             step_id="humidity_sensors",
-            data_schema=get_humidity_sensors_schema(self.hass),
+            data_schema=get_humidity_sensors_selection_schema(current_sensors),
             errors=errors,
         )
+
+    async def async_step_humidity_sensors_zones(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the Humidity sensor zone assignment step."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            # Check for back button
+            if user_input.get("back"):
+                return await self.async_step_humidity_sensors()
+                
+            try:
+                # Process zone assignments
+                selected_sensors = self._data.get("humidity_sensors", [])
+                zones = []
+                for i in range(len(selected_sensors)):
+                    zone_key = f"humidity_sensor_{i}_zone"
+                    zone_value = user_input.get(zone_key, "1")
+                    try:
+                        zones.append(int(zone_value))
+                    except ValueError:
+                        zones.append(1)
+                
+                # Store zone assignments
+                self._sensor_zones["humidity_sensors"] = zones
+                self._data["humidity_sensor_zones"] = zones
+                
+                # Go to air quality indices step
+                return await self.async_step_air_quality_indices()
+                    
+            except InvalidRange as err:
+                errors["humidity_sensor_zones"] = str(err)
+                _LOGGER.warning(f"Invalid Humidity sensor zones: {err}")
+            except Exception as err:  # pylint: disable=broad-except
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in Humidity zones step: {err}", exc_info=True)
+
+        # Show the zone assignment form
+        selected_sensors = self._data.get("humidity_sensors", [])
+        current_zones = self._sensor_zones.get("humidity_sensors", [])
+        zones_schema = get_humidity_sensors_zones_schema(
+            self.hass, selected_sensors, current_zones, self._num_zones
+        )
+        
+        if zones_schema:
+            # Create placeholders with sensor names
+            placeholders = {
+                "sensor_count": str(len(selected_sensors)),
+                "zone_count": str(self._num_zones)
+            }
+            
+            # Add sensor names for translation placeholders
+            for i, sensor in enumerate(selected_sensors):
+                sensor_name = get_entity_display_name(self.hass, sensor)
+                placeholders[f"sensor_{i}_name"] = sensor_name
+            
+            return self.async_show_form(
+                step_id="humidity_sensors_zones",
+                data_schema=zones_schema,
+                description_placeholders=placeholders,
+                errors=errors,
+            )
+        
+        # Fallback - should not happen
+        return await self.async_step_air_quality_indices()
 
     async def async_step_air_quality_indices(
         self, user_input: dict[str, Any] | None = None
@@ -901,6 +1934,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 classes.add(dc)
         return classes
 
+    def _update_co2_classes(self, entity_ids: list[str]) -> None:
+        classes = self._detect_device_classes(entity_ids)
+        self._sensor_classes["co2"] = "carbon_dioxide" in classes
+
     def _update_voc_classes(self, entity_ids: list[str]) -> None:
         classes = self._detect_device_classes(entity_ids)
         self._sensor_classes["voc"] = "volatile_organic_compounds" in classes
@@ -934,6 +1971,10 @@ class InvalidKiTimes(HomeAssistantError):
 
 class InvalidAirQualityIndex(HomeAssistantError):
     """Error to indicate invalid air quality index format."""
+
+
+class InvalidZoneConfig(HomeAssistantError):
+    """Error to indicate invalid zone configuration."""
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):

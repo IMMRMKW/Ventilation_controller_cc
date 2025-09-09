@@ -6,13 +6,26 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import DOMAIN, SIGNAL_AQI_UPDATED, SIGNAL_RATE_UPDATED
+from .const import DOMAIN, SIGNAL_AQI_UPDATED, SIGNAL_RATE_UPDATED, CONF_ZONE_CONFIGS, CONF_NUM_ZONES
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
-    async_add_entities([
-        AirQualityIndexSensor(hass, entry),
-        FanRatePercentSensor(hass, entry),
-    ])
+    # Determine number of zones from zone configurations or num_zones
+    cfg = {**entry.data, **entry.options}
+    zone_configs = cfg.get(CONF_ZONE_CONFIGS, {})
+    # Try zone_configs first, then num_zones, then fallback to 1
+    num_zones = len(zone_configs) if zone_configs else int(cfg.get(CONF_NUM_ZONES, 1))
+    
+    # Create sensors list
+    sensors = []
+    
+    # Create one AQI sensor per zone
+    for zone_id in range(1, num_zones + 1):
+        sensors.append(AirQualityIndexSensor(hass, entry, zone_id))
+    
+    # Add single fan rate sensor (global)
+    sensors.append(FanRatePercentSensor(hass, entry))
+    
+    async_add_entities(sensors)
 
 
 class AirQualityIndexSensor(SensorEntity):
@@ -24,14 +37,28 @@ class AirQualityIndexSensor(SensorEntity):
     _attr_icon = "mdi:gauge"
     _attr_suggested_display_precision = 2
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, zone_id: int = None) -> None:
         self.hass = hass
         self.entry = entry
-        self._attr_name = "Air Quality Index"
-        self._attr_unique_id = f"{entry.entry_id}_aqi"
-        # initial value if already present
+        self.zone_id = zone_id
+        
+        # Set name and unique_id based on zone
+        if zone_id is not None:
+            self._attr_name = f"Air Quality Index Zone {zone_id}"
+            self._attr_unique_id = f"{entry.entry_id}_aqi_zone_{zone_id}"
+        else:
+            # Fallback for single zone
+            self._attr_name = "Air Quality Index"
+            self._attr_unique_id = f"{entry.entry_id}_aqi"
+        
+        # Get initial value if already present
         data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-        initial = data.get("aqi", 0.0) if isinstance(data, dict) else 0.0
+        if zone_id is not None:
+            zone_data = data.get("zone_aqi", {}) if isinstance(data, dict) else {}
+            initial = zone_data.get(zone_id, 0.0)
+        else:
+            initial = data.get("aqi", 0.0) if isinstance(data, dict) else 0.0
+            
         try:
             self._attr_native_value = round(float(initial), 2)
         except Exception:
@@ -42,13 +69,23 @@ class AirQualityIndexSensor(SensorEntity):
         @callback
         def _handle_update(payload: dict) -> None:
             try:
-                self._attr_native_value = round(float(payload.get("aqi", 0.0)), 2)
+                if self.zone_id is not None:
+                    # Zone-specific AQI
+                    zone_aqi_data = payload.get("zone_aqi", {})
+                    aqi_value = zone_aqi_data.get(self.zone_id, 0.0)
+                else:
+                    # Global AQI (fallback)
+                    aqi_value = payload.get("aqi", 0.0)
+                    
+                self._attr_native_value = round(float(aqi_value), 2)
             except Exception:
                 self._attr_native_value = 0.0
             self.async_write_ha_state()
 
+        # Listen for AQI updates (single signal with all zone data)
+        signal_name = f"{SIGNAL_AQI_UPDATED}_{self.entry.entry_id}"
         self._unsub = async_dispatcher_connect(
-            self.hass, f"{SIGNAL_AQI_UPDATED}_{self.entry.entry_id}", _handle_update
+            self.hass, signal_name, _handle_update
         )
 
     async def async_will_remove_from_hass(self) -> None:

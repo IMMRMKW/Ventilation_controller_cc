@@ -33,6 +33,17 @@ from .const import (
     CONF_UPDATE_INTERVAL,
     CONF_REMOTE_DEVICE,
     CONF_FAN_DEVICE,
+    CONF_VALVE_DEVICES,
+    CONF_NUM_ZONES,
+    CONF_ZONE_CONFIGS,
+    CONF_ZONE_ID_FROM,
+    CONF_ZONE_ID_TO,
+    CONF_ZONE_MIN_FAN,
+    CONF_ZONE_MAX_FAN,
+    CONF_CO2_SENSOR_ZONES,
+    CONF_VOC_SENSOR_ZONES,
+    CONF_PM_SENSOR_ZONES,
+    CONF_HUMIDITY_SENSOR_ZONES,
     CONF_CO2_INDEX,
     CONF_VOC_INDEX,
     CONF_VOC_PPM_INDEX,
@@ -236,13 +247,69 @@ def _worst_air_quality_index(
 
     return worst_idx, worst_entity, worst_value, worst_dc
 
-def format_fan_command(remote_serial: str, fan_serial: str, rate: int) -> str:
+
+def _calculate_zone_air_quality(
+    hass: HomeAssistant,
+    zone_id: int,
+    co2_sensors: list[str],
+    voc_sensors: list[str], 
+    pm_sensors: list[str],
+    humidity_sensors: list[str],
+    co2_zones: list[int],
+    voc_zones: list[int],
+    pm_zones: list[int], 
+    humidity_zones: list[int],
+    thresholds_by_dc: dict[str, list[float]],
+    previous_values: dict[str, float],
+    humidity_avg_tracker: HumidityMovingAverage,
+) -> tuple[float, str, float, str]:
+    """Calculate air quality index for a specific zone using only sensors assigned to that zone."""
+    
+    # Filter sensors assigned to this zone
+    zone_co2_sensors = []
+    zone_voc_sensors = []
+    zone_pm_sensors = []
+    zone_humidity_sensors = []
+    
+    # Filter CO2 sensors for this zone
+    for i, sensor in enumerate(co2_sensors):
+        if i < len(co2_zones) and co2_zones[i] == zone_id:
+            zone_co2_sensors.append(sensor)
+    
+    # Filter VOC sensors for this zone        
+    for i, sensor in enumerate(voc_sensors):
+        if i < len(voc_zones) and voc_zones[i] == zone_id:
+            zone_voc_sensors.append(sensor)
+            
+    # Filter PM sensors for this zone
+    for i, sensor in enumerate(pm_sensors):
+        if i < len(pm_zones) and pm_zones[i] == zone_id:
+            zone_pm_sensors.append(sensor)
+            
+    # Filter humidity sensors for this zone
+    for i, sensor in enumerate(humidity_sensors):
+        if i < len(humidity_zones) and humidity_zones[i] == zone_id:
+            zone_humidity_sensors.append(sensor)
+    
+    # Use existing air quality calculation function with filtered sensors
+    return _worst_air_quality_index(
+        hass,
+        zone_co2_sensors,
+        zone_voc_sensors,
+        zone_pm_sensors,
+        zone_humidity_sensors,
+        thresholds_by_dc,
+        previous_values,
+        humidity_avg_tracker,
+    )
+
+def format_zone_command(id_from: str, id_to: str, rate: int) -> str:
     """
-    Convert rate to ramses_cc command format.
+    Convert rate to ramses_cc command format for a specific zone.
     
     Args:
-        remote_serial: Serial number of the remote device (e.g., "29:162275")
-        fan_serial: Serial number of the fan device (e.g., "32:146231") 
+        id_from: Source device ID (e.g., "29:162275")
+        id_to: Target device ID (e.g., "32:146231") 
         rate: Fan power rate (0-255)
         
     Returns:
@@ -252,9 +319,105 @@ def format_fan_command(remote_serial: str, fan_serial: str, rate: int) -> str:
     rate_hex = f"{rate:02X}"
     
     # Build the command string
-    command = f" I --- {remote_serial} {fan_serial} --:------ 31E0 008 0000{rate_hex}000100AA00"
+    command = f" I --- {id_from} {id_to} --:------ 31E0 008 0000{rate_hex}000100AA00"
     
     return command
+
+async def send_zone_commands_with_delay(hass: HomeAssistant, zone_configs: dict, zone_rates: dict, remote_entity_id: str, entry_data: dict) -> None:
+    """
+    Send zone commands with delays between them in a non-blocking way.
+    
+    Args:
+        hass: Home Assistant instance
+        zone_configs: Zone configuration dictionary
+        zone_rates: Dictionary of zone rates to send
+        remote_entity_id: Remote entity ID for sending commands
+        entry_data: Entry data containing learned commands
+    """
+    import asyncio
+    
+    learned_commands = entry_data.get("learned_commands", set())
+    
+    async def send_single_zone_command(zone_id: int, delay_seconds: float = 0):
+        """Send command to a single zone with optional delay."""
+        if delay_seconds > 0:
+            await asyncio.sleep(delay_seconds)
+            
+        zone_config = zone_configs.get(zone_id)
+        zone_rate = zone_rates.get(zone_id)
+        
+        if not zone_config or zone_rate is None:
+            return
+            
+        id_from = zone_config.get(CONF_ZONE_ID_FROM)
+        id_to = zone_config.get(CONF_ZONE_ID_TO)
+        
+        if not id_from or not id_to:
+            _LOGGER.warning(f"Zone {zone_id} missing ID configuration, skipping command")
+            return
+            
+        # Create unique command name for this zone and rate
+        command_name = f"zone_{zone_id}_rate_{zone_rate}"
+        
+        # Check if this command has been learned before
+        if command_name not in learned_commands:
+            # Need to learn the command first
+            formatted_command = format_zone_command(id_from, id_to, zone_rate)
+            _LOGGER.info(f"Learning new command '{command_name}': {formatted_command}")
+            
+            try:
+                # await hass.services.async_call(
+                #     "ramses_cc", "learn_command",
+                #     {
+                #         "entity_id": remote_entity_id,
+                #         "command": command_name,
+                #         "packet": formatted_command
+                #     },
+                #     blocking=True
+                # )
+                
+                # Mark this command as learned
+                learned_commands.add(command_name)
+                entry_data["learned_commands"] = learned_commands
+                _LOGGER.info(f"Successfully learned command '{command_name}'")
+                
+            except Exception as e:
+                _LOGGER.error(f"Failed to learn command '{command_name}': {e}")
+                return
+        
+        # Send the command using the learned command name
+        _LOGGER.debug(f"Sending command '{command_name}' to zone {zone_id} (rate: {zone_rate})")
+        
+        try:
+            await hass.services.async_call(
+                "ramses_cc", "send_command",
+                {
+                    "entity_id": remote_entity_id,
+                    "command": command_name
+                },
+                blocking=True
+            )
+            _LOGGER.debug(f"Successfully sent command to zone {zone_id}")
+        except Exception as e:
+            _LOGGER.error(f"Failed to send command '{command_name}' to zone {zone_id}: {e}")
+    
+    # Create tasks to send commands with staggered delays
+    tasks = []
+    delay_between_commands = 2.0  # 2 seconds between commands
+    
+    for i, zone_id in enumerate(sorted(zone_rates.keys())):
+        delay = i * delay_between_commands
+        task = hass.async_create_task(
+            send_single_zone_command(zone_id, delay),
+            name=f"send_zone_{zone_id}_command"
+        )
+        tasks.append(task)
+    
+    # Start all tasks (they will run concurrently with their delays)
+    if tasks:
+        _LOGGER.debug(f"Starting {len(tasks)} zone command tasks with {delay_between_commands}s delays")
+        # Don't await here - let them run in the background
+        # The tasks will complete on their own schedule
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PID Ventilation Control from a config entry."""
@@ -265,9 +428,69 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     voc_sensors = cfg.get(CONF_VOC_SENSORS, [])
     pm_sensors = cfg.get(CONF_PM_SENSORS, [])
     humidity_sensors = cfg.get(CONF_HUMIDITY_SENSORS, [])
+    
+    # Get zone assignments
+    co2_zones = cfg.get(CONF_CO2_SENSOR_ZONES, [])
+    voc_zones = cfg.get(CONF_VOC_SENSOR_ZONES, [])
+    pm_zones = cfg.get(CONF_PM_SENSOR_ZONES, [])
+    humidity_zones = cfg.get(CONF_HUMIDITY_SENSOR_ZONES, [])
+    
+    # Get zone configurations and determine number of zones
+    zone_configs = cfg.get(CONF_ZONE_CONFIGS, {})
+    
+    # Backward compatibility: if no zone configs but has old fan settings, create default zone config
+    if not zone_configs:
+        min_fan_output = cfg.get(CONF_MIN_FAN_OUTPUT, 0)
+        max_fan_output = cfg.get(CONF_MAX_FAN_OUTPUT, 255)
+        remote_device_id = cfg.get(CONF_REMOTE_DEVICE)
+        fan_device_id = cfg.get(CONF_FAN_DEVICE)
+        
+        # Try to extract serial numbers from devices for backward compatibility
+        remote_serial = None
+        fan_serial = None
+        
+        if remote_device_id:
+            try:
+                device_registry = dr.async_get(hass)
+                remote_device = device_registry.async_get(remote_device_id)
+                if remote_device:
+                    for domain, identifier in remote_device.identifiers:
+                        if isinstance(identifier, str) and len(identifier) > 6:
+                            remote_serial = identifier
+                            break
+            except Exception:
+                pass
+        
+        if fan_device_id:
+            try:
+                device_registry = dr.async_get(hass)
+                fan_device = device_registry.async_get(fan_device_id)
+                if fan_device:
+                    for domain, identifier in fan_device.identifiers:
+                        if isinstance(identifier, str) and len(identifier) > 6:
+                            fan_serial = identifier
+                            break
+            except Exception:
+                pass
+        
+        # Create default zone config if we have the necessary data
+        if remote_serial and fan_serial:
+            zone_configs = {
+                1: {
+                    CONF_ZONE_ID_FROM: remote_serial,
+                    CONF_ZONE_ID_TO: fan_serial,
+                    CONF_ZONE_MIN_FAN: min_fan_output,
+                    CONF_ZONE_MAX_FAN: max_fan_output,
+                }
+            }
+            _LOGGER.info(f"Created backward compatibility zone config: {zone_configs[1]}")
+    
+    num_zones = len(zone_configs) if zone_configs else 1
+    
+    # Get valve devices for backward compatibility
+    valve_devices = cfg.get(CONF_VALVE_DEVICES, [])
+    
     setpoint = cfg[CONF_SETPOINT]
-    min_fan_output = cfg[CONF_MIN_FAN_OUTPUT]
-    max_fan_output = cfg[CONF_MAX_FAN_OUTPUT]
     kp_config = cfg[CONF_KP]
     ki_times = cfg[CONF_KI_TIMES]
     update_interval = cfg[CONF_UPDATE_INTERVAL]
@@ -344,23 +567,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
     
     _LOGGER.info(
-        f"Ventilation setup - CO2: {len(co2_sensors)}, VOC: {len(voc_sensors)}, PM: {len(pm_sensors)}, Humidity: {len(humidity_sensors)}, Setpoint: {setpoint}"
+        f"Ventilation setup - {num_zones} zones, CO2: {len(co2_sensors)}, VOC: {len(voc_sensors)}, PM: {len(pm_sensors)}, Humidity: {len(humidity_sensors)}, Setpoint: {setpoint}"
     )
-    _LOGGER.info(f"Fan range: {min_fan_output}-{max_fan_output}, Kp: {kp_config}, Update interval: {update_interval}s")
+    _LOGGER.info(f"Zone configs: {list(zone_configs.keys())}, Kp: {kp_config}, Update interval: {update_interval}s")
   
-    # Fan discrete speeds [percent]
-    fan_speeds = np.arange(min_fan_output, max_fan_output + 1e-6, 1)
+    # Calculate the overall fan range for PID calculations (use widest range from all zones)
+    if zone_configs:
+        all_min_rates = [zone_configs[zone_id].get(CONF_ZONE_MIN_FAN, 0) for zone_id in zone_configs]
+        all_max_rates = [zone_configs[zone_id].get(CONF_ZONE_MAX_FAN, 255) for zone_id in zone_configs]
+        global_min_rate = min(all_min_rates)
+        global_max_rate = max(all_max_rates)
+    else:
+        # Fallback for single zone without configuration
+        global_min_rate = 0
+        global_max_rate = 255
+    
+    # Fan discrete speeds for PID calculation
+    fan_speeds = np.arange(global_min_rate, global_max_rate + 1e-6, 1)
 
     # PID coefficients
-    fan_diff = fan_speeds.max() - fan_speeds.min()
+    fan_diff = fan_speeds.max() - fan_speeds.min() if len(fan_speeds) > 1 else 255
     Kp = kp_config
     Ki = [fan_diff / ki_time for ki_time in ki_times]
     
     _LOGGER.info(f"Calculated Ki values: {Ki}")
     #Kd = 0.005
 
-    integral = 0.0
-    prev_error = 0.0
+    # Initialize separate PID states for each zone
+    zone_pid_states = {}
+    for zone_id in range(1, num_zones + 1):
+        zone_pid_states[zone_id] = {
+            "integral": 0.0,
+            "prev_error": 0.0,
+        }
 
     # Previous values cache per entity
     previous_values: dict[str, float] = {}
@@ -369,7 +608,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     humidity_avg_tracker = HumidityMovingAverage()
 
     async def pid_control(now):
-        nonlocal integral, prev_error, previous_values
+        nonlocal zone_pid_states, previous_values
         # Skip if controller disabled via switch
         domain_data = hass.data.get(DOMAIN, {})
         entry_data = domain_data.get(entry.entry_id, {}) if isinstance(domain_data, dict) else {}
@@ -378,8 +617,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry_data["last_execution_time"] = datetime.now()
             return
             
-        # Get humidity tracker from stored data
+        # Get humidity tracker and zone PID states from stored data
         humidity_avg_tracker = entry_data.get("humidity_avg_tracker", HumidityMovingAverage())
+        stored_zone_pid_states = entry_data.get("zone_pid_states", {})
+        
+        # Update zone_pid_states with stored values if available
+        for zone_id in zone_pid_states:
+            if zone_id in stored_zone_pid_states:
+                zone_pid_states[zone_id] = stored_zone_pid_states[zone_id]
         
         # Get current setpoint (may have been updated via number entity)
         runtime_setpoint = entry_data.get("current_setpoint")
@@ -402,32 +647,62 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Update last execution time in entry data
         entry_data["last_execution_time"] = current_time
 
-        # Compute worst AQ index across all sensors
-        aqi, worst_entity, worst_value, worst_dc = _worst_air_quality_index(
-            hass,
-            co2_sensors,
-            voc_sensors,
-            pm_sensors,
-            humidity_sensors,
-            thresholds_by_dc,
-            previous_values,
-            humidity_avg_tracker,
-        )
-        air_quality_index = aqi
+        # Calculate AQI per zone and find worst overall
+        zone_aqi_data = {}
+        worst_zone_aqi = 0.0
+        worst_entity = ""
+        worst_value = 0.0
+        worst_dc = ""
+        worst_zone = 1
+        
+        for zone_id in range(1, num_zones + 1):
+            zone_aqi, zone_worst_entity, zone_worst_value, zone_worst_dc = _calculate_zone_air_quality(
+                hass,
+                zone_id,
+                co2_sensors,
+                voc_sensors,
+                pm_sensors,
+                humidity_sensors,
+                co2_zones,
+                voc_zones,
+                pm_zones,
+                humidity_zones,
+                thresholds_by_dc,
+                previous_values,
+                humidity_avg_tracker,
+            )
+            
+            zone_aqi_data[zone_id] = zone_aqi
+            
+            # Track worst zone for overall fan control
+            if zone_aqi > worst_zone_aqi:
+                worst_zone_aqi = zone_aqi
+                worst_entity = zone_worst_entity
+                worst_value = zone_worst_value
+                worst_dc = zone_worst_dc
+                worst_zone = zone_id
+        
+        # Use worst zone AQI for fan control
+        air_quality_index = worst_zone_aqi
 
         # Update shared state and notify subscribers (sensor)
         try:
             ed = hass.data.get(DOMAIN, {}).get(entry.entry_id)
             if isinstance(ed, dict):
-                ed["aqi"] = air_quality_index
+                ed["aqi"] = air_quality_index  # Overall worst AQI
+                ed["zone_aqi"] = zone_aqi_data  # Per-zone AQI data
+                ed["worst_zone"] = worst_zone
                 ed["worst_entity"] = worst_entity
                 ed["worst_value"] = worst_value
                 ed["worst_dc"] = worst_dc
+                ed["humidity_avg_tracker"] = humidity_avg_tracker
             async_dispatcher_send(
                 hass,
                 f"{SIGNAL_AQI_UPDATED}_{entry.entry_id}",
                 {
                     "aqi": air_quality_index,
+                    "zone_aqi": zone_aqi_data,
+                    "worst_zone": worst_zone,
                     "worst_entity": worst_entity,
                     "worst_value": worst_value,
                     "worst_dc": worst_dc,
@@ -436,108 +711,94 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception:  # best-effort notification
             pass
 
-        idx = min(int(round(air_quality_index)), len(Ki) - 1)
-        Ki_index_based = Ki[idx]
-        error       = air_quality_index - current_setpoint
-        integral   += error * Ki_index_based * time_diff
-        prev_error  = error
-
-        # PID output (desired removal rate)
-        pid_output = Kp * error + integral + fan_speeds.min() # + Kd * derivative
-
-        # Map to discrete fan speed and handle integral windup
-        if pid_output < fan_speeds[0]:
-            rate = int(fan_speeds[0])
-            integral -= error * Ki_index_based * time_diff  # Remove the integral contribution that caused windup
-        elif pid_output > fan_speeds[-1]:
-            rate = int(fan_speeds[-1])
-            integral -= error * Ki_index_based * time_diff  # Remove the integral contribution that caused windup
-        else:
-            # Round to nearest integer within allowed range
-            rate = int(round(float(np.clip(pid_output, fan_speeds[0], fan_speeds[-1]))))
+        # Run separate PID controllers for each zone
+        zone_rates = {}
         
-        # Format the command using the extracted serial numbers
-        if remote_serial_number and fan_serial_number:
-            command_name = str(rate)
+        # Check if we have zone configurations
+        if not zone_configs:
+            _LOGGER.warning("No zone configurations found, cannot send fan commands")
+            return
             
-            # Get the learned commands set for this entry
-            domain_data = hass.data.get(DOMAIN, {})
-            entry_data = domain_data.get(entry.entry_id, {})
-            learned_commands = entry_data.get("learned_commands", set())
+        # Calculate the maximum rate from all zones for the overall rate sensor
+        max_zone_rate = 0
+        
+        for zone_id, zone_config in zone_configs.items():
+            # Get zone-specific parameters
+            id_from = zone_config.get(CONF_ZONE_ID_FROM)
+            id_to = zone_config.get(CONF_ZONE_ID_TO)
+            zone_min = zone_config.get(CONF_ZONE_MIN_FAN, 0)
+            zone_max = zone_config.get(CONF_ZONE_MAX_FAN, 255)
             
-            # Check if this rate command has been learned before
-            if command_name not in learned_commands:
-                # Need to learn the command first
-                formatted_command = format_fan_command(remote_serial_number, fan_serial_number, rate)
-                _LOGGER.info(f"Learning new command '{command_name}': {formatted_command}")
-                
-                try:
-                    # await hass.services.async_call(
-                    #     "ramses_cc", "learn_command",
-                    #     {
-                    #         "entity_id": remote_entity_id,
-                    #         "command": command_name,
-                    #         "packet": formatted_command
-                    #     },
-                    #     blocking=True
-                    # )
-                    
-                    # Mark this command as learned
-                    learned_commands.add(command_name)
-                    entry_data["learned_commands"] = learned_commands
-                    _LOGGER.info(f"Successfully learned command '{command_name}'")
-                    
-                except Exception as e:
-                    _LOGGER.error(f"Failed to learn command '{command_name}': {e}")
-                    return
+            if not id_from or not id_to:
+                _LOGGER.warning(f"Zone {zone_id} missing ID configuration, skipping")
+                continue
             
-            # Send the command using the learned command name
-            _LOGGER.info(f"Sending command '{command_name}' (rate: {rate})")
+            # Get zone-specific AQI
+            zone_aqi = zone_aqi_data.get(zone_id, 0.0)
             
-            try:
-                await hass.services.async_call(
-                    "ramses_cc", "send_command",
-                    {
-                        "entity_id": remote_entity_id,
-                        "command": command_name
-                    },
-                    blocking=True
-                )
-            except Exception as e:
-                _LOGGER.error(f"Failed to send command '{command_name}': {e}")
-                return
-                
-        else:
-            # Fallback to old method if serial numbers not available
-            _LOGGER.warning("Serial numbers not available, using fallback command method")
-            await hass.services.async_call(
-                "ramses_cc", "send_command",
-                {
-                    "num_repeats": 3,
-                    "delay_secs": 0.05,
-                    "entity_id": remote_entity_id,
-                    "command": rate
-                },
-                blocking=True
-            )
+            # Get PID state for this zone
+            pid_state = zone_pid_states.get(zone_id, {"integral": 0.0, "prev_error": 0.0})
+            
+            # Calculate zone-specific PID output
+            idx = min(int(round(zone_aqi)), len(Ki) - 1)
+            Ki_index_based = Ki[idx]
+            error = zone_aqi - current_setpoint
+            pid_state["integral"] += error * Ki_index_based * time_diff
+            pid_state["prev_error"] = error
+            
+            # Zone-specific fan speeds range
+            zone_fan_speeds = np.arange(zone_min, zone_max + 1e-6, 1)
+            
+            # PID output (desired removal rate) for this zone
+            pid_output = Kp * error + pid_state["integral"] + zone_fan_speeds.min()
+            
+            # Map to discrete fan speed and handle integral windup for this zone
+            if pid_output < zone_fan_speeds[0]:
+                zone_rate = int(zone_fan_speeds[0])
+                pid_state["integral"] -= error * Ki_index_based * time_diff  # Remove the integral contribution that caused windup
+            elif pid_output > zone_fan_speeds[-1]:
+                zone_rate = int(zone_fan_speeds[-1])
+                pid_state["integral"] -= error * Ki_index_based * time_diff  # Remove the integral contribution that caused windup
+            else:
+                # Round to nearest integer within allowed range
+                zone_rate = int(round(float(np.clip(pid_output, zone_fan_speeds[0], zone_fan_speeds[-1]))))
+            
+            # Store the updated PID state
+            zone_pid_states[zone_id] = pid_state
+            zone_rates[zone_id] = zone_rate
+            
+            # Track maximum rate for overall sensor
+            max_zone_rate = max(max_zone_rate, zone_rate)
+            
+            _LOGGER.debug(f"Zone {zone_id} PID: AQI={zone_aqi:.2f}, Setpoint={current_setpoint:.2f}, Error={error:.2f}, Rate={zone_rate}, Integral={pid_state['integral']:.2f}")
+        
+        # Send commands to each zone with delays between them (non-blocking)
+        await send_zone_commands_with_delay(hass, zone_configs, zone_rates, remote_entity_id, entry_data)
 
-        # Compute and publish rate percentage
+        # Compute and publish rate percentage (use max zone rate for overall percentage)
+        global_rate = max_zone_rate
         try:
-            span = max_fan_output - min_fan_output
-            pct = 0.0 if span <= 0 else round((rate - min_fan_output) * 100.0 / span, 2)
+            span = global_max_rate - global_min_rate
+            pct = 0.0 if span <= 0 else round((global_rate - global_min_rate) * 100.0 / span, 2)
             ed = hass.data.get(DOMAIN, {}).get(entry.entry_id)
             if isinstance(ed, dict):
                 ed["rate_pct"] = pct
+                ed["zone_rates"] = zone_rates  # Store individual zone rates
+                ed["zone_pid_states"] = zone_pid_states  # Store PID states
             async_dispatcher_send(
                 hass,
                 f"{SIGNAL_RATE_UPDATED}_{entry.entry_id}",
-                {"rate_pct": pct, "rate": rate},
+                {"rate_pct": pct, "rate": global_rate, "zone_rates": zone_rates},
             )
         except Exception:
             pass
 
+        # Log zone AQI and rate information
+        zone_aqi_str = ", ".join([f"Zone {zone}: AQI={aqi:.2f}" for zone, aqi in zone_aqi_data.items()])
+        zone_rates_str = ", ".join([f"Zone {zone}: {rate}" for zone, rate in zone_rates.items()])
+        zone_pid_str = ", ".join([f"Zone {zone}: I={zone_pid_states.get(zone, {}).get('integral', 0):.2f}" for zone in zone_rates.keys()])
         _LOGGER.info(
-            f"PID: Worst={worst_entity} (dc={worst_dc}, val={worst_value}), AQI={air_quality_index:.2f}, Setpoint={current_setpoint:.2f}, Error={error:.2f}, Fan={rate}%, Integral={integral:.2f}"
+            f"Dual PID: {zone_aqi_str}, Worst=Zone {worst_zone} ({worst_entity}, dc={worst_dc}, val={worst_value}), Setpoint={current_setpoint:.2f}, Rates({zone_rates_str}), Integrals({zone_pid_str})"
         )
 
     # Store the remove callback and runtime state in hass.data for cleanup and control
@@ -552,6 +813,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "enabled": True,
         "remove_listener": remove_listener,
         "aqi": 0.0,
+        "zone_rates": {},  # Track individual zone rates
         "worst_entity": None,
         "worst_value": None,
         "worst_dc": None,
@@ -559,8 +821,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "remote_device_id": remote_device_id,
         "remote_entity_id": remote_entity_id,
         "remote_serial_number": remote_serial_number,
-        "fan_device_id": fan_device_id,
-        "fan_serial_number": fan_serial_number,
+        "zone_configs": zone_configs,  # Store zone configurations
+        "zone_pid_states": zone_pid_states,  # Store PID states for each zone
         "learned_commands": set(),  # Track which rate commands have been learned
         "last_execution_time": None,  # Instance-specific last execution time
         "current_setpoint": setpoint,  # Initialize with config setpoint
