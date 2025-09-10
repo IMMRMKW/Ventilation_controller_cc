@@ -34,6 +34,7 @@
         "data": {
           "id_from": "ID From (Remote Device)",
           "id_to": "ID To (Zone Device)",
+          "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate",
           "back": "Back"
@@ -41,6 +42,7 @@
         "data_description": {
           "id_from": "Source device ID (e.g., '29:162275' for remote device)",
           "id_to": "Target device ID (e.g., '32:146231' for zone fan/valve)",
+          "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
@@ -51,6 +53,7 @@
         "data": {
           "id_from": "ID From (Remote Device)",
           "id_to": "ID To (Zone Device)",
+          "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate",
           "back": "Back"
@@ -58,6 +61,7 @@
         "data_description": {
           "id_from": "Source device ID (e.g., '29:162275' for remote device)",
           "id_to": "Target device ID (e.g., '32:146232' for zone fan/valve)",
+          "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
@@ -68,6 +72,7 @@
         "data": {
           "id_from": "ID From (Remote Device)",
           "id_to": "ID To (Zone Device)",
+          "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate",
           "back": "Back"
@@ -75,6 +80,7 @@
         "data_description": {
           "id_from": "Source device ID (e.g., '29:162275' for remote device)",
           "id_to": "Target device ID (e.g., '32:146233' for zone fan/valve)",
+          "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
@@ -85,6 +91,7 @@
         "data": {
           "id_from": "ID From (Remote Device)",
           "id_to": "ID To (Zone Device)",
+          "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate",
           "back": "Back"
@@ -92,6 +99,7 @@
         "data_description": {
           "id_from": "Source device ID (e.g., '29:162275' for remote device)",
           "id_to": "Target device ID (e.g., '32:146234' for zone fan/valve)",
+          "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
@@ -102,6 +110,7 @@
         "data": {
           "id_from": "ID From (Remote Device)",
           "id_to": "ID To (Zone Device)",
+          "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate",
           "back": "Back"
@@ -109,6 +118,7 @@
         "data_description": {
           "id_from": "Source device ID (e.g., '29:162275' for remote device)",
           "id_to": "Target device ID (e.g., '32:146235' for zone fan/valve)",
+          "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
@@ -127,7 +137,7 @@
           "setpoint": "Target air quality index (0.0 = excellent air, 5.0 = very poor air)",
           "kp": "How aggressively the system responds to air quality changes (0.1-1000)",
           "ki_times": "How fast the error is integrated. 3600 means it takes approximately 1 hour for the fan to reach 100%.",
-          "update_interval": "How often to check sensors and adjust the fan (10-3600 seconds)"
+          "update_interval": "How often to check sensors and adjust the fan (10-3600 seconds). Choosing this too small can upset ramses_cc. Choose a value larger than ramses_cc gateway scan interval."
         }
       },
       "sensor_types": {
@@ -372,6 +382,12 @@
           "kp": "Proportional Gain (Kp)",
           "ki_times": "Integral Gain (Ki)",
           "update_interval": "Update Interval (seconds)"
+        },
+        "data_description": {
+          "setpoint": "Target air quality index (0.0 = excellent air, 5.0 = very poor air)",
+          "kp": "How aggressively the system responds to air quality changes (0.1-1000)",
+          "ki_times": "How fast the error is integrated. 3600 means it takes approximately 1 hour for the fan to reach 100%.",
+          "update_interval": "How often to check sensors and adjust the fan (10-3600 seconds). Should be larger than your ramses_cc gateway scan interval for optimal performance."
         }
       }
     }

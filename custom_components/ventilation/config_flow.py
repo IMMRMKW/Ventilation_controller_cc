@@ -24,6 +24,7 @@ from .const import (
     DEFAULT_PM_2_5_INDEX,
     DEFAULT_PM_10_INDEX,
     DEFAULT_HUMIDITY_INDEX,
+    CONF_ZONE_SENSOR_ID,
 )
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,12 +78,16 @@ def get_device_selection_schema():
         vol.Required("fan_device"): selector.DeviceSelector(
             selector.DeviceSelectorConfig(integration="ramses_cc")
         ),
-        vol.Optional("num_zones", default=1): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=1,
-                max=5,
-                step=1,
-                mode="box"
+        vol.Optional("num_zones", default="1"): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(value="1", label="1 Zone"),
+                    selector.SelectOptionDict(value="2", label="2 Zones"), 
+                    selector.SelectOptionDict(value="3", label="3 Zones"),
+                    selector.SelectOptionDict(value="4", label="4 Zones"),
+                    selector.SelectOptionDict(value="5", label="5 Zones"),
+                ],
+                mode=selector.SelectSelectorMode.DROPDOWN
             )
         ),
     }, extra=vol.ALLOW_EXTRA)
@@ -120,9 +125,13 @@ def get_zone_config_schema(zone_number: int, current_config: dict = None, remote
     default_id_from = current_config.get("id_from", remote_serial)
     default_id_to = current_config.get("id_to", fan_serial)
     
+    # Calculate default sensor ID: 255 for zone 1, 254 for zone 2, etc.
+    default_sensor_id = current_config.get("sensor_id", 256 - zone_number)
+    
     return vol.Schema({
         vol.Required("id_from", default=default_id_from): cv.string,
         vol.Required("id_to", default=default_id_to): cv.string,
+        vol.Required("sensor_id", default=default_sensor_id): vol.Coerce(int),
         vol.Required("min_fan_rate", default=current_config.get("min_fan_rate", 0)): vol.Coerce(int),
         vol.Required("max_fan_rate", default=current_config.get("max_fan_rate", 255)): vol.Coerce(int),
         vol.Optional("back", default=False): selector.BooleanSelector(),
@@ -644,6 +653,11 @@ async def validate_zone_config_input(hass: HomeAssistant, data: dict[str, Any], 
     if ":" not in id_to or len(id_to.split(":")) != 2:
         raise InvalidZoneConfig(f"Zone {zone_number} ID_to must be in format 'XX:XXXXXX' (e.g., '32:146231')")
     
+    # Validate sensor ID
+    sensor_id = data.get("sensor_id", 255)
+    if not (0 <= sensor_id <= 255):
+        raise InvalidZoneConfig(f"Zone {zone_number} sensor ID must be between 0 and 255")
+    
     # Validate fan rate ranges
     min_fan = data.get("min_fan_rate", 0)
     max_fan = data.get("max_fan_rate", 255)
@@ -1033,6 +1047,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._data["zone_configs"][zone_number] = {
                     "id_from": user_input["id_from"],
                     "id_to": user_input["id_to"],
+                    "sensor_id": user_input["sensor_id"],
                     "min_fan_rate": user_input["min_fan_rate"],
                     "max_fan_rate": user_input["max_fan_rate"],
                 }

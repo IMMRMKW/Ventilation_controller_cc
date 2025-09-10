@@ -38,6 +38,7 @@ from .const import (
     CONF_ZONE_CONFIGS,
     CONF_ZONE_ID_FROM,
     CONF_ZONE_ID_TO,
+    CONF_ZONE_SENSOR_ID,
     CONF_ZONE_MIN_FAN,
     CONF_ZONE_MAX_FAN,
     CONF_CO2_SENSOR_ZONES,
@@ -303,7 +304,7 @@ def _calculate_zone_air_quality(
         humidity_avg_tracker,
     )
 
-def format_zone_command(id_from: str, id_to: str, rate: int) -> str:
+def format_zone_command(id_from: str, id_to: str, rate: int, sensor_id: int = 255) -> str:
     """
     Convert rate to ramses_cc command format for a specific zone.
     
@@ -311,15 +312,17 @@ def format_zone_command(id_from: str, id_to: str, rate: int) -> str:
         id_from: Source device ID (e.g., "29:162275")
         id_to: Target device ID (e.g., "32:146231") 
         rate: Fan power rate (0-255)
+        sensor_id: Sensor identifier (0-255, defaults to 255)
         
     Returns:
-        Formatted command string like " I --- 29:162275 32:146231 --:------ 31E0 008 00000A000100AA00"
+        Formatted command string like " I --- 29:162275 32:146231 --:------ 31E0 008 00000A0001FFAA00"
     """
-    # Convert rate to hex (2 digits, uppercase)
+    # Convert rate and sensor_id to hex (2 digits, uppercase)
     rate_hex = f"{rate:02X}"
+    sensor_id_hex = f"{sensor_id:02X}"
     
-    # Build the command string
-    command = f" I --- {id_from} {id_to} --:------ 31E0 008 0000{rate_hex}000100AA00"
+    # Build the command string with sensor_id in the appropriate position
+    command = f" I --- {id_from} {id_to} --:------ 31E0 008 0000{rate_hex}000100{sensor_id_hex}00"
     
     return command
 
@@ -351,6 +354,7 @@ async def send_zone_commands_with_delay(hass: HomeAssistant, zone_configs: dict,
             
         id_from = zone_config.get(CONF_ZONE_ID_FROM)
         id_to = zone_config.get(CONF_ZONE_ID_TO)
+        sensor_id = zone_config.get(CONF_ZONE_SENSOR_ID, 256 - zone_id)  # Default to 255 for zone 1, 254 for zone 2, etc.
         
         if not id_from or not id_to:
             _LOGGER.warning(f"Zone {zone_id} missing ID configuration, skipping command")
@@ -362,18 +366,34 @@ async def send_zone_commands_with_delay(hass: HomeAssistant, zone_configs: dict,
         # Check if this command has been added before
         if command_name not in added_commands:
             # Need to add the command first
-            formatted_command = format_zone_command(id_from, id_to, zone_rate)
+            formatted_command = format_zone_command(id_from, id_to, zone_rate, sensor_id)
             _LOGGER.info(f"Adding new command '{command_name}': {formatted_command}")
             
             try:
-                await hass.services.async_call(
-                    "ramses_cc", "add_command",
-                    {
-                        "entity_id": remote_entity_id,
-                        "command": command_name,
-                        "packet_string": formatted_command
-                    },
-                    blocking=False  # Don't block - let it complete in background
+                # Use asyncio.create_task to completely detach the add_command call
+                # with timeout protection to prevent hanging
+                async def add_command_with_timeout():
+                    try:
+                        await asyncio.wait_for(
+                            hass.services.async_call(
+                                "ramses_cc", "add_command",
+                                {
+                                    "entity_id": remote_entity_id,
+                                    "command": command_name,
+                                    "packet_string": formatted_command
+                                },
+                                blocking=False
+                            ),
+                            timeout=5.0  # 5 second timeout for add_command
+                        )
+                    except asyncio.TimeoutError:
+                        _LOGGER.warning(f"Timeout adding command '{command_name}', continuing anyway")
+                    except Exception as e:
+                        _LOGGER.warning(f"Error adding command '{command_name}': {e}")
+                
+                add_task = hass.async_create_task(
+                    add_command_with_timeout(),
+                    name=f"ramses_add_{command_name}"
                 )
                 
                 # Mark this command as added immediately (assume it will succeed)
@@ -392,13 +412,29 @@ async def send_zone_commands_with_delay(hass: HomeAssistant, zone_configs: dict,
         _LOGGER.debug(f"Sending command '{command_name}' to zone {zone_id} (rate: {zone_rate})")
         
         try:
-            await hass.services.async_call(
-                "ramses_cc", "send_command",
-                {
-                    "entity_id": remote_entity_id,
-                    "command": command_name
-                },
-                blocking=False  # Don't block - fire and forget
+            # Use asyncio.create_task to completely detach the service call
+            # This ensures our PID controller never gets blocked by ramses_cc timeouts
+            async def send_command_with_timeout():
+                try:
+                    await asyncio.wait_for(
+                        hass.services.async_call(
+                            "ramses_cc", "send_command",
+                            {
+                                "entity_id": remote_entity_id,
+                                "command": command_name
+                            },
+                            blocking=False
+                        ),
+                        timeout=10.0  # 10 second timeout for send_command
+                    )
+                except asyncio.TimeoutError:
+                    _LOGGER.warning(f"Timeout sending command '{command_name}' to zone {zone_id}")
+                except Exception as e:
+                    _LOGGER.warning(f"Error sending command '{command_name}' to zone {zone_id}: {e}")
+            
+            hass.async_create_task(
+                send_command_with_timeout(),
+                name=f"ramses_send_{command_name}"
             )
             _LOGGER.debug(f"Successfully initiated command to zone {zone_id}")
         except Exception as e:
@@ -482,6 +518,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 1: {
                     CONF_ZONE_ID_FROM: remote_serial,
                     CONF_ZONE_ID_TO: fan_serial,
+                    CONF_ZONE_SENSOR_ID: 255,  # Default sensor ID for zone 1
                     CONF_ZONE_MIN_FAN: min_fan_output,
                     CONF_ZONE_MAX_FAN: max_fan_output,
                 }
@@ -612,13 +649,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def pid_control(now):
         nonlocal zone_pid_states, previous_values
-        # Skip if controller disabled via switch
+        # Check if controller is enabled
         domain_data = hass.data.get(DOMAIN, {})
         entry_data = domain_data.get(entry.entry_id, {}) if isinstance(domain_data, dict) else {}
-        if not entry_data.get("enabled", True):
-            # Reset time baseline to avoid integral spike when re-enabled
-            entry_data["last_execution_time"] = datetime.now()
-            return
+        controller_enabled = entry_data.get("enabled", True)
             
         # Get humidity tracker and zone PID states from stored data
         humidity_avg_tracker = entry_data.get("humidity_avg_tracker", HumidityMovingAverage())
@@ -714,69 +748,95 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception:  # best-effort notification
             pass
 
-        # Run separate PID controllers for each zone
+        # Initialize zone rates
         zone_rates = {}
-        
-        # Check if we have zone configurations
-        if not zone_configs:
-            _LOGGER.warning("No zone configurations found, cannot send fan commands")
-            return
-            
-        # Calculate the maximum rate from all zones for the overall rate sensor
         max_zone_rate = 0
         
-        for zone_id, zone_config in zone_configs.items():
-            # Get zone-specific parameters
-            id_from = zone_config.get(CONF_ZONE_ID_FROM)
-            id_to = zone_config.get(CONF_ZONE_ID_TO)
-            zone_min = zone_config.get(CONF_ZONE_MIN_FAN, 0)
-            zone_max = zone_config.get(CONF_ZONE_MAX_FAN, 255)
+        # Check if PID control is enabled
+        if not controller_enabled:
+            # Controller is disabled - set all zones to rate 0 but continue monitoring
+            _LOGGER.debug("Controller disabled - setting all zones to rate 0")
             
-            if not id_from or not id_to:
-                _LOGGER.warning(f"Zone {zone_id} missing ID configuration, skipping")
-                continue
+            # Reset time baseline to avoid integral spike when re-enabled
+            entry_data["last_execution_time"] = datetime.now()
             
-            # Get zone-specific AQI
-            zone_aqi = zone_aqi_data.get(zone_id, 0.0)
+            # Set all zones to zero rate
+            if zone_configs:
+                for zone_id in zone_configs.keys():
+                    zone_rates[zone_id] = 0
             
-            # Get PID state for this zone
-            pid_state = zone_pid_states.get(zone_id, {"integral": 0.0, "prev_error": 0.0})
+            # Update rate sensors with zero values but skip PID calculations and commands
+            max_zone_rate = 0
+        else:
+            # Controller is enabled - run PID calculations and send commands
+            _LOGGER.debug("Controller enabled - running PID calculations")
             
-            # Calculate zone-specific PID output
-            idx = min(int(round(zone_aqi)), len(Ki) - 1)
-            Ki_index_based = Ki[idx]
-            error = zone_aqi - current_setpoint
-            pid_state["integral"] += error * Ki_index_based * time_diff
-            pid_state["prev_error"] = error
-            
-            # Zone-specific fan speeds range
-            zone_fan_speeds = np.arange(zone_min, zone_max + 1e-6, 1)
-            
-            # PID output (desired removal rate) for this zone
-            pid_output = Kp * error + pid_state["integral"] + zone_fan_speeds.min()
-            
-            # Map to discrete fan speed and handle integral windup for this zone
-            if pid_output < zone_fan_speeds[0]:
-                zone_rate = int(zone_fan_speeds[0])
-                pid_state["integral"] -= error * Ki_index_based * time_diff  # Remove the integral contribution that caused windup
-            elif pid_output > zone_fan_speeds[-1]:
-                zone_rate = int(zone_fan_speeds[-1])
-                pid_state["integral"] -= error * Ki_index_based * time_diff  # Remove the integral contribution that caused windup
+            # Check if we have zone configurations
+            if not zone_configs:
+                _LOGGER.warning("No zone configurations found, cannot send fan commands")
+                # Set empty rates for sensors
+                for zone_id in range(1, num_zones + 1):
+                    zone_rates[zone_id] = 0
+                max_zone_rate = 0
             else:
-                # Round to nearest integer within allowed range
-                zone_rate = int(round(float(np.clip(pid_output, zone_fan_speeds[0], zone_fan_speeds[-1]))))
-            
-            # Store the updated PID state
-            zone_pid_states[zone_id] = pid_state
-            zone_rates[zone_id] = zone_rate
-            
-            # Track maximum rate for overall sensor
-            max_zone_rate = max(max_zone_rate, zone_rate)
-            
-            _LOGGER.debug(f"Zone {zone_id} PID: AQI={zone_aqi:.2f}, Setpoint={current_setpoint:.2f}, Error={error:.2f}, Rate={zone_rate}, Integral={pid_state['integral']:.2f}")
-        
-        # Send commands to each zone with delays between them (non-blocking)
-        await send_zone_commands_with_delay(hass, zone_configs, zone_rates, remote_entity_id, entry_data)
+                # Run separate PID controllers for each zone
+                for zone_id, zone_config in zone_configs.items():
+                    # Get zone-specific parameters
+                    id_from = zone_config.get(CONF_ZONE_ID_FROM)
+                    id_to = zone_config.get(CONF_ZONE_ID_TO)
+                    sensor_id = zone_config.get(CONF_ZONE_SENSOR_ID, 256 - zone_id)  # Default to 255 for zone 1, 254 for zone 2, etc.
+                    zone_min = zone_config.get(CONF_ZONE_MIN_FAN, 0)
+                    zone_max = zone_config.get(CONF_ZONE_MAX_FAN, 255)
+                    
+                    if not id_from or not id_to:
+                        _LOGGER.warning(f"Zone {zone_id} missing ID configuration, skipping")
+                        continue
+                    
+                    # Get zone-specific AQI
+                    zone_aqi = zone_aqi_data.get(zone_id, 0.0)
+                    
+                    # Get PID state for this zone
+                    pid_state = zone_pid_states.get(zone_id, {"integral": 0.0, "prev_error": 0.0})
+                    
+                    # Calculate zone-specific PID output
+                    idx = min(int(round(zone_aqi)), len(Ki) - 1)
+                    Ki_index_based = Ki[idx]
+                    error = zone_aqi - current_setpoint
+                    pid_state["integral"] += error * Ki_index_based * time_diff
+                    pid_state["prev_error"] = error
+                    
+                    # Zone-specific fan speeds range
+                    zone_fan_speeds = np.arange(zone_min, zone_max + 1e-6, 1)
+                    
+                    # PID output (desired removal rate) for this zone
+                    pid_output = Kp * error + pid_state["integral"] + zone_fan_speeds.min()
+                    
+                    # Map to discrete fan speed and handle integral windup for this zone
+                    if pid_output < zone_fan_speeds[0]:
+                        zone_rate = int(zone_fan_speeds[0])
+                        pid_state["integral"] -= error * Ki_index_based * time_diff  # Remove the integral contribution that caused windup
+                    elif pid_output > zone_fan_speeds[-1]:
+                        zone_rate = int(zone_fan_speeds[-1])
+                        pid_state["integral"] -= error * Ki_index_based * time_diff  # Remove the integral contribution that caused windup
+                    else:
+                        # Round to nearest integer within allowed range
+                        zone_rate = int(round(float(np.clip(pid_output, zone_fan_speeds[0], zone_fan_speeds[-1]))))
+                    
+                    # Store the updated PID state
+                    zone_pid_states[zone_id] = pid_state
+                    zone_rates[zone_id] = zone_rate
+                    
+                    # Track maximum rate for overall sensor
+                    max_zone_rate = max(max_zone_rate, zone_rate)
+                    
+                    _LOGGER.debug(f"Zone {zone_id} PID: AQI={zone_aqi:.2f}, Setpoint={current_setpoint:.2f}, Error={error:.2f}, Rate={zone_rate}, Integral={pid_state['integral']:.2f}")
+                
+                # Send commands to each zone with delays between them (non-blocking) - only when enabled
+                try:
+                    await send_zone_commands_with_delay(hass, zone_configs, zone_rates, remote_entity_id, entry_data)
+                except Exception as e:
+                    _LOGGER.warning(f"Error in zone command transmission (continuing PID operation): {e}")
+                    # Don't let ramses_cc errors stop the PID controller
 
         # Compute and publish rate percentage (use max zone rate for overall percentage)
         global_rate = max_zone_rate

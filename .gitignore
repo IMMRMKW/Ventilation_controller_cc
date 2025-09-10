@@ -62,6 +62,10 @@ matching.txt
 simulation.py
 sortFancommands.py
 sort_by_timestamp.py
+log.txt
+log2.txt
+log3.txt
+log4.txt
 
 # Configuration files (optional - uncomment if you want to ignore these)
 # configuration_example.yaml
