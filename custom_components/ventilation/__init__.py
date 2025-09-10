@@ -332,11 +332,11 @@ async def send_zone_commands_with_delay(hass: HomeAssistant, zone_configs: dict,
         zone_configs: Zone configuration dictionary
         zone_rates: Dictionary of zone rates to send
         remote_entity_id: Remote entity ID for sending commands
-        entry_data: Entry data containing learned commands
+        entry_data: Entry data containing added commands
     """
     import asyncio
     
-    learned_commands = entry_data.get("learned_commands", set())
+    added_commands = entry_data.get("added_commands", set())
     
     async def send_single_zone_command(zone_id: int, delay_seconds: float = 0):
         """Send command to a single zone with optional delay."""
@@ -359,33 +359,36 @@ async def send_zone_commands_with_delay(hass: HomeAssistant, zone_configs: dict,
         # Create unique command name for this zone and rate
         command_name = f"zone_{zone_id}_rate_{zone_rate}"
         
-        # Check if this command has been learned before
-        if command_name not in learned_commands:
-            # Need to learn the command first
+        # Check if this command has been added before
+        if command_name not in added_commands:
+            # Need to add the command first
             formatted_command = format_zone_command(id_from, id_to, zone_rate)
-            _LOGGER.info(f"Learning new command '{command_name}': {formatted_command}")
+            _LOGGER.info(f"Adding new command '{command_name}': {formatted_command}")
             
             try:
-                # await hass.services.async_call(
-                #     "ramses_cc", "learn_command",
-                #     {
-                #         "entity_id": remote_entity_id,
-                #         "command": command_name,
-                #         "packet": formatted_command
-                #     },
-                #     blocking=True
-                # )
+                await hass.services.async_call(
+                    "ramses_cc", "add_command",
+                    {
+                        "entity_id": remote_entity_id,
+                        "command": command_name,
+                        "packet_string": formatted_command
+                    },
+                    blocking=False  # Don't block - let it complete in background
+                )
                 
-                # Mark this command as learned
-                learned_commands.add(command_name)
-                entry_data["learned_commands"] = learned_commands
-                _LOGGER.info(f"Successfully learned command '{command_name}'")
+                # Mark this command as added immediately (assume it will succeed)
+                added_commands.add(command_name)
+                entry_data["added_commands"] = added_commands
+                _LOGGER.info(f"Successfully initiated adding command '{command_name}'")
+                
+                # Give ramses_cc a moment to process the add_command
+                await asyncio.sleep(0.5)
                 
             except Exception as e:
-                _LOGGER.error(f"Failed to learn command '{command_name}': {e}")
+                _LOGGER.error(f"Failed to add command '{command_name}': {e}")
                 return
         
-        # Send the command using the learned command name
+        # Send the command using the added command name
         _LOGGER.debug(f"Sending command '{command_name}' to zone {zone_id} (rate: {zone_rate})")
         
         try:
@@ -395,15 +398,15 @@ async def send_zone_commands_with_delay(hass: HomeAssistant, zone_configs: dict,
                     "entity_id": remote_entity_id,
                     "command": command_name
                 },
-                blocking=True
+                blocking=False  # Don't block - fire and forget
             )
-            _LOGGER.debug(f"Successfully sent command to zone {zone_id}")
+            _LOGGER.debug(f"Successfully initiated command to zone {zone_id}")
         except Exception as e:
             _LOGGER.error(f"Failed to send command '{command_name}' to zone {zone_id}: {e}")
     
     # Create tasks to send commands with staggered delays
     tasks = []
-    delay_between_commands = 2.0  # 2 seconds between commands
+    delay_between_commands = 1.0  # 1 second between commands (reduced since non-blocking)
     
     for i, zone_id in enumerate(sorted(zone_rates.keys())):
         delay = i * delay_between_commands
@@ -823,7 +826,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "remote_serial_number": remote_serial_number,
         "zone_configs": zone_configs,  # Store zone configurations
         "zone_pid_states": zone_pid_states,  # Store PID states for each zone
-        "learned_commands": set(),  # Track which rate commands have been learned
+        "added_commands": set(),  # Track which rate commands have been added
         "last_execution_time": None,  # Instance-specific last execution time
         "current_setpoint": setpoint,  # Initialize with config setpoint
         "humidity_avg_tracker": humidity_avg_tracker,  # Store humidity moving average tracker
