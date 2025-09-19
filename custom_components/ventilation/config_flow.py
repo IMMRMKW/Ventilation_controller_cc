@@ -1220,7 +1220,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Check for back button
             if user_input.get("back"):
-                return await self.async_step_fan_settings()
+                # Go back to last zone configuration step
+                return await getattr(self, f"async_step_zone_config_{self._num_zones}")()
                 
             try:
                 # Validate the sensor types selection
@@ -2003,14 +2004,38 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Top-level options menu."""
+        # Build dynamic menu based on number of zones
+        num_zones = self._data.get("num_zones", 1)
+        menu_options = [
+            "device_selection",
+        ]
+        
+        # Add zone configuration options
+        for zone_num in range(1, num_zones + 1):
+            menu_options.append(f"zone_{zone_num}_config")
+        
+        # Add sensor type selection (always available)
+        menu_options.append("sensor_types")
+        
+        # Add direct sensor configuration options for enabled sensor types
+        if self._data.get("use_co2_sensors") or self._data.get("co2_sensors"):
+            menu_options.append("co2_sensors_options")
+        if self._data.get("use_voc_sensors") or self._data.get("voc_sensors"):
+            menu_options.append("voc_sensors_options")
+        if self._data.get("use_pm_sensors") or self._data.get("pm_sensors"):
+            menu_options.append("pm_sensors_options")
+        if self._data.get("use_humidity_sensors") or self._data.get("humidity_sensors"):
+            menu_options.append("humidity_sensors_options")
+        
+        # Add other settings
+        menu_options.extend([
+            "iaq_settings", 
+            "pid_settings",
+        ])
+        
         return self.async_show_menu(
             step_id="init",
-            menu_options=[
-                "fan_settings",
-                "sensor_settings",
-                "iaq_settings",
-                "pid_settings",
-            ],
+            menu_options=menu_options,
         )
 
     # Fan settings -----------------------------------------------------------
@@ -2077,60 +2102,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 _LOGGER.error(f"Unknown error in fan_settings: {e}", exc_info=True)
                 errors["base"] = "unknown"
         return self.async_show_form(step_id="fan_settings", data_schema=self._schema_fan(), errors=errors)
-
-    # Sensor settings --------------------------------------------------------
-    def _schema_sensors(self) -> vol.Schema:
-        cur = self._data
-        return vol.Schema({
-            vol.Optional("use_co2_sensors", default=cur.get("use_co2_sensors", bool(cur.get("co2_sensors")))): cv.boolean,
-            vol.Optional("use_voc_sensors", default=cur.get("use_voc_sensors", bool(cur.get("voc_sensors")))): cv.boolean,
-            vol.Optional("use_pm_sensors", default=cur.get("use_pm_sensors", bool(cur.get("pm_sensors")))): cv.boolean,
-            vol.Optional("use_humidity_sensors", default=cur.get("use_humidity_sensors", bool(cur.get("humidity_sensors")))): cv.boolean,
-            vol.Optional("co2_sensors", default=cur.get("co2_sensors", [])): selector.EntitySelector(
-                selector.EntitySelectorConfig(domain="sensor", device_class="carbon_dioxide", multiple=True)
-            ),
-            vol.Optional("voc_sensors", default=cur.get("voc_sensors", [])): selector.EntitySelector(
-                selector.EntitySelectorConfig(domain="sensor", device_class=["volatile_organic_compounds", "volatile_organic_compounds_parts"], multiple=True)
-            ),
-            vol.Optional("pm_sensors", default=cur.get("pm_sensors", [])): selector.EntitySelector(
-                selector.EntitySelectorConfig(domain="sensor", device_class=["pm1", "pm10", "pm25"], multiple=True)
-            ),
-            vol.Optional("humidity_sensors", default=cur.get("humidity_sensors", [])): selector.EntitySelector(
-                selector.EntitySelectorConfig(domain="sensor", device_class="humidity", multiple=True)
-            ),
-        }, extra=vol.ALLOW_EXTRA)
-
-    async def async_step_sensor_settings(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            try:
-                # Persist booleans
-                for k in ("use_co2_sensors", "use_voc_sensors", "use_pm_sensors", "use_humidity_sensors"):
-                    if k in user_input:
-                        self._data[k] = user_input[k]
-                # Persist sensors (lists)
-                for k in ("co2_sensors", "voc_sensors", "pm_sensors", "humidity_sensors"):
-                    if k in user_input:
-                        sensors = user_input.get(k) or []
-                        if not isinstance(sensors, list):
-                            sensors = [sensors]
-                        self._data[k] = [s for s in sensors if s]
-                # Basic validation: if a type is enabled, require at least one
-                if self._data.get("use_co2_sensors") and not self._data.get("co2_sensors"):
-                    raise InvalidSensor("At least one CO2 sensor must be specified")
-                if self._data.get("use_voc_sensors") and not self._data.get("voc_sensors"):
-                    raise InvalidSensor("At least one VOC sensor must be specified")
-                if self._data.get("use_pm_sensors") and not self._data.get("pm_sensors"):
-                    raise InvalidSensor("At least one PM sensor must be specified")
-                if self._data.get("use_humidity_sensors") and not self._data.get("humidity_sensors"):
-                    raise InvalidSensor("At least one Humidity sensor must be specified")
-                return self.async_create_entry(title="", data={**self.config_entry.options, **{k: v for k, v in self._data.items() if k in user_input or k.endswith('_sensors')}})
-            except InvalidSensor:
-                errors["base"] = "no_sensors"
-            except Exception as e:
-                _LOGGER.error(f"Unknown error in sensor_settings: {e}", exc_info=True)
-                errors["base"] = "unknown"
-        return self.async_show_form(step_id="sensor_settings", data_schema=self._schema_sensors(), errors=errors)
 
     # IAQ settings (indices) -------------------------------------------------
     def _schema_iaq(self) -> vol.Schema:
@@ -2230,3 +2201,842 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 _LOGGER.error(f"Unknown error in pid_settings: {e}", exc_info=True)
                 errors["base"] = "unknown"
         return self.async_show_form(step_id="pid_settings", data_schema=self._schema_pid(), errors=errors)
+
+    # Sensor type selection options -------------------------------------------
+    async def async_step_sensor_types(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle sensor type selection in options flow."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            try:
+                # Store sensor type selections
+                updated_data = {}
+                for sensor_type in ("use_co2_sensors", "use_voc_sensors", "use_pm_sensors", "use_humidity_sensors"):
+                    updated_data[sensor_type] = user_input.get(sensor_type, False)
+                
+                # Validate that at least one sensor type is selected
+                if not any(updated_data.values()):
+                    raise InvalidSensor("At least one sensor type must be selected")
+                
+                # Get current state to compare changes
+                old_data = {**self.config_entry.data, **self.config_entry.options}
+                
+                # Handle deselected sensor types - clear their data
+                for sensor_type, enabled in updated_data.items():
+                    if not enabled and old_data.get(sensor_type, False):
+                        # This sensor type was deselected, clear its data
+                        sensor_name = sensor_type.replace("use_", "").replace("_sensors", "")
+                        self._data[f"{sensor_name}_sensors"] = []
+                        self._data[f"{sensor_name}_sensor_zones"] = []
+                
+                # Store the selections
+                self._data.update(updated_data)
+                
+                # Determine which sensor types were newly enabled (changed from False to True)
+                newly_enabled = []
+                for sensor_type, enabled in updated_data.items():
+                    if enabled and not old_data.get(sensor_type, False):
+                        newly_enabled.append(sensor_type)
+                
+                # If nothing new was enabled (only deselections or no changes), save and exit
+                if not newly_enabled:
+                    sensor_data = {}
+                    for key in ("use_co2_sensors", "use_voc_sensors", "use_pm_sensors", "use_humidity_sensors",
+                               "co2_sensors", "voc_sensors", "pm_sensors", "humidity_sensors",
+                               "co2_sensor_zones", "voc_sensor_zones", "pm_sensor_zones", "humidity_sensor_zones"):
+                        if key in self._data:
+                            sensor_data[key] = self._data[key]
+                    return self.async_create_entry(title="", data={**self.config_entry.options, **sensor_data})
+                
+                # Navigate to the first newly enabled sensor type
+                for sensor_type in ("use_co2_sensors", "use_voc_sensors", "use_pm_sensors", "use_humidity_sensors"):
+                    if sensor_type in newly_enabled:
+                        if sensor_type == "use_co2_sensors":
+                            return await self.async_step_co2_sensors_options()
+                        elif sensor_type == "use_voc_sensors":
+                            return await self.async_step_voc_sensors_options()
+                        elif sensor_type == "use_pm_sensors":
+                            return await self.async_step_pm_sensors_options()
+                        elif sensor_type == "use_humidity_sensors":
+                            return await self.async_step_humidity_sensors_options()
+                
+                # Fallback - should not reach here
+                return self.async_create_entry(title="", data={**self.config_entry.options, **updated_data})
+                    
+            except InvalidSensor as err:
+                errors["base"] = "no_sensor_types"
+                _LOGGER.warning(f"Invalid sensor types: {err}")
+            except Exception as err:
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in sensor types options: {err}", exc_info=True)
+
+        # Show the sensor type selection form
+        return self.async_show_form(
+            step_id="sensor_types",
+            data_schema=self._schema_sensor_types(),
+            errors=errors,
+        )
+
+    def _schema_sensor_types(self) -> vol.Schema:
+        """Generate schema for sensor type selection with current values as defaults."""
+        cur = self._data
+        return vol.Schema({
+            vol.Optional("use_co2_sensors", default=cur.get("use_co2_sensors", bool(cur.get("co2_sensors")))): cv.boolean,
+            vol.Optional("use_voc_sensors", default=cur.get("use_voc_sensors", bool(cur.get("voc_sensors")))): cv.boolean,
+            vol.Optional("use_pm_sensors", default=cur.get("use_pm_sensors", bool(cur.get("pm_sensors")))): cv.boolean,
+            vol.Optional("use_humidity_sensors", default=cur.get("use_humidity_sensors", bool(cur.get("humidity_sensors")))): cv.boolean,
+        }, extra=vol.ALLOW_EXTRA)
+
+    # CO2 sensor options -------------------------------------------------------
+    async def async_step_co2_sensors_options(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle CO2 sensor selection in options flow."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            try:
+                # Store CO2 sensors
+                sensors = user_input.get("co2_sensors", [])
+                if not isinstance(sensors, list):
+                    sensors = [sensors] if sensors else []
+                sensors = [s for s in sensors if s]
+                
+                # Enable CO2 sensors if any are selected
+                if sensors:
+                    self._data["use_co2_sensors"] = True
+                    self._data["co2_sensors"] = sensors
+                else:
+                    # If no sensors selected, disable CO2 sensors
+                    self._data["use_co2_sensors"] = False
+                    self._data["co2_sensors"] = []
+                
+                # Handle zone assignments if multiple zones and sensors exist
+                num_zones = self._data.get("num_zones", 1)
+                if num_zones > 1 and sensors:
+                    return await self.async_step_co2_sensors_zones_options()
+                else:
+                    # Single zone or no sensors, assign all to zone 1
+                    self._data["co2_sensor_zones"] = [1] * len(sensors)
+                    
+                    # Check if there are other newly enabled sensor types to configure
+                    old_data = {**self.config_entry.data, **self.config_entry.options}
+                    remaining_new_types = []
+                    for sensor_type in ("use_voc_sensors", "use_pm_sensors", "use_humidity_sensors"):
+                        if (self._data.get(sensor_type) and not old_data.get(sensor_type, False)):
+                            remaining_new_types.append(sensor_type)
+                    
+                    if remaining_new_types:
+                        # Continue to next newly enabled sensor type
+                        return await self._next_sensor_step_options("co2")
+                    else:
+                        # No more new sensor types, save and return to menu
+                        sensor_data = {}
+                        for key in ("use_co2_sensors", "use_voc_sensors", "use_pm_sensors", "use_humidity_sensors",
+                                   "co2_sensors", "voc_sensors", "pm_sensors", "humidity_sensors",
+                                   "co2_sensor_zones", "voc_sensor_zones", "pm_sensor_zones", "humidity_sensor_zones"):
+                            if key in self._data:
+                                sensor_data[key] = self._data[key]
+                        
+                        return self.async_create_entry(title="", data={**self.config_entry.options, **sensor_data})
+                    
+            except InvalidSensor as err:
+                errors["co2_sensors"] = "invalid_sensor"
+                _LOGGER.warning(f"Invalid CO2 sensor: {err}")
+            except Exception as err:
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in CO2 sensors options: {err}", exc_info=True)
+
+        # Show the CO2 sensor selection form
+        return self.async_show_form(
+            step_id="co2_sensors_options",
+            data_schema=self._schema_co2_sensors_options(),
+            errors=errors,
+        )
+
+    def _schema_co2_sensors_options(self) -> vol.Schema:
+        """Generate schema for CO2 sensor selection with current values as defaults."""
+        cur = self._data
+        return vol.Schema({
+            vol.Optional("co2_sensors", default=cur.get("co2_sensors", [])): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain="sensor",
+                    device_class="carbon_dioxide",
+                    multiple=True,
+                )
+            ),
+        }, extra=vol.ALLOW_EXTRA)
+
+    async def async_step_co2_sensors_zones_options(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle CO2 sensor zone assignment in options flow."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            try:
+                # Process zone assignments
+                sensors = self._data.get("co2_sensors", [])
+                zones = []
+                for i in range(len(sensors)):
+                    zone_key = f"co2_sensor_{i}_zone"
+                    zone_value = user_input.get(zone_key, "1")
+                    try:
+                        zones.append(int(zone_value))
+                    except ValueError:
+                        zones.append(1)
+                
+                # Store zone assignments
+                self._data["co2_sensor_zones"] = zones
+                
+                # Check if there are other newly enabled sensor types to configure
+                old_data = {**self.config_entry.data, **self.config_entry.options}
+                remaining_new_types = []
+                for sensor_type in ("use_voc_sensors", "use_pm_sensors", "use_humidity_sensors"):
+                    if (self._data.get(sensor_type) and not old_data.get(sensor_type, False)):
+                        remaining_new_types.append(sensor_type)
+                
+                if remaining_new_types:
+                    # Continue to next newly enabled sensor type
+                    return await self._next_sensor_step_options("co2")
+                else:
+                    # No more new sensor types, save and return to menu
+                    sensor_data = {}
+                    for key in ("use_co2_sensors", "use_voc_sensors", "use_pm_sensors", "use_humidity_sensors",
+                               "co2_sensors", "voc_sensors", "pm_sensors", "humidity_sensors",
+                               "co2_sensor_zones", "voc_sensor_zones", "pm_sensor_zones", "humidity_sensor_zones"):
+                        if key in self._data:
+                            sensor_data[key] = self._data[key]
+                    
+                    return self.async_create_entry(title="", data={**self.config_entry.options, **sensor_data})
+                    
+            except Exception as err:
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in CO2 zones options: {err}", exc_info=True)
+
+        # Show the zone assignment form
+        return self.async_show_form(
+            step_id="co2_sensors_zones_options",
+            data_schema=self._schema_co2_sensors_zones_options(),
+            errors=errors,
+        )
+
+    def _schema_co2_sensors_zones_options(self) -> vol.Schema:
+        """Generate schema for CO2 sensor zone assignment with current values as defaults."""
+        cur = self._data
+        sensors = cur.get("co2_sensors", [])
+        current_zones = cur.get("co2_sensor_zones", [])
+        num_zones = cur.get("num_zones", 1)
+        
+        if not sensors or num_zones <= 1:
+            return vol.Schema({}, extra=vol.ALLOW_EXTRA)
+        
+        zone_options = get_zone_options(num_zones)
+        schema_dict = {}
+        
+        for i, sensor in enumerate(sensors):
+            current_zone = str(current_zones[i]) if i < len(current_zones) else "1"
+            field_key = f"co2_sensor_{i}_zone"
+            
+            schema_dict[vol.Required(field_key, default=current_zone)] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=zone_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+        
+        return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
+
+    # VOC sensor options -------------------------------------------------------
+    async def async_step_voc_sensors_options(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle VOC sensor selection in options flow."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            try:
+                # Store VOC sensors
+                sensors = user_input.get("voc_sensors", [])
+                if not isinstance(sensors, list):
+                    sensors = [sensors] if sensors else []
+                sensors = [s for s in sensors if s]
+                
+                # Enable VOC sensors if any are selected
+                if sensors:
+                    self._data["use_voc_sensors"] = True
+                    self._data["voc_sensors"] = sensors
+                else:
+                    # If no sensors selected, disable VOC sensors
+                    self._data["use_voc_sensors"] = False
+                    self._data["voc_sensors"] = []
+                
+                # Handle zone assignments if multiple zones and sensors exist
+                num_zones = self._data.get("num_zones", 1)
+                if num_zones > 1 and sensors:
+                    return await self.async_step_voc_sensors_zones_options()
+                else:
+                    # Single zone or no sensors, assign all to zone 1
+                    self._data["voc_sensor_zones"] = [1] * len(sensors)
+                    
+                    # Continue to next newly enabled sensor type or finish
+                    return await self._next_sensor_step_options("voc")
+                    
+            except InvalidSensor as err:
+                errors["voc_sensors"] = "invalid_sensor"
+                _LOGGER.warning(f"Invalid VOC sensor: {err}")
+            except Exception as err:
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in VOC sensors options: {err}", exc_info=True)
+
+        # Show the VOC sensor selection form
+        return self.async_show_form(
+            step_id="voc_sensors_options",
+            data_schema=self._schema_voc_sensors_options(),
+            errors=errors,
+        )
+
+    def _schema_voc_sensors_options(self) -> vol.Schema:
+        """Generate schema for VOC sensor selection with current values as defaults."""
+        cur = self._data
+        return vol.Schema({
+            vol.Optional("voc_sensors", default=cur.get("voc_sensors", [])): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain="sensor",
+                    device_class=["volatile_organic_compounds", "volatile_organic_compounds_parts"],
+                    multiple=True,
+                )
+            ),
+        }, extra=vol.ALLOW_EXTRA)
+
+    async def async_step_voc_sensors_zones_options(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle VOC sensor zone assignment in options flow."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            try:
+                # Process zone assignments
+                sensors = self._data.get("voc_sensors", [])
+                zones = []
+                for i in range(len(sensors)):
+                    zone_key = f"voc_sensor_{i}_zone"
+                    zone_value = user_input.get(zone_key, "1")
+                    try:
+                        zones.append(int(zone_value))
+                    except ValueError:
+                        zones.append(1)
+                
+                # Store zone assignments
+                self._data["voc_sensor_zones"] = zones
+                
+                # Continue to next newly enabled sensor type or finish
+                return await self._next_sensor_step_options("voc")
+                    
+            except Exception as err:
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in VOC zones options: {err}", exc_info=True)
+
+        # Show the zone assignment form
+        return self.async_show_form(
+            step_id="voc_sensors_zones_options",
+            data_schema=self._schema_voc_sensors_zones_options(),
+            errors=errors,
+        )
+
+    def _schema_voc_sensors_zones_options(self) -> vol.Schema:
+        """Generate schema for VOC sensor zone assignment with current values as defaults."""
+        cur = self._data
+        sensors = cur.get("voc_sensors", [])
+        current_zones = cur.get("voc_sensor_zones", [])
+        num_zones = cur.get("num_zones", 1)
+        
+        if not sensors or num_zones <= 1:
+            return vol.Schema({}, extra=vol.ALLOW_EXTRA)
+        
+        zone_options = get_zone_options(num_zones)
+        schema_dict = {}
+        
+        for i, sensor in enumerate(sensors):
+            current_zone = str(current_zones[i]) if i < len(current_zones) else "1"
+            field_key = f"voc_sensor_{i}_zone"
+            
+            schema_dict[vol.Required(field_key, default=current_zone)] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=zone_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+        
+        return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
+
+    # PM sensor options --------------------------------------------------------
+    async def async_step_pm_sensors_options(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle PM sensor selection in options flow."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            try:
+                # Store PM sensors
+                sensors = user_input.get("pm_sensors", [])
+                if not isinstance(sensors, list):
+                    sensors = [sensors] if sensors else []
+                sensors = [s for s in sensors if s]
+                
+                # Enable PM sensors if any are selected
+                if sensors:
+                    self._data["use_pm_sensors"] = True
+                    self._data["pm_sensors"] = sensors
+                else:
+                    # If no sensors selected, disable PM sensors
+                    self._data["use_pm_sensors"] = False
+                    self._data["pm_sensors"] = []
+                
+                # Handle zone assignments if multiple zones and sensors exist
+                num_zones = self._data.get("num_zones", 1)
+                if num_zones > 1 and sensors:
+                    return await self.async_step_pm_sensors_zones_options()
+                else:
+                    # Single zone or no sensors, assign all to zone 1
+                    self._data["pm_sensor_zones"] = [1] * len(sensors)
+                    
+                    # Continue to next newly enabled sensor type or finish
+                    return await self._next_sensor_step_options("pm")
+                    
+            except InvalidSensor as err:
+                errors["pm_sensors"] = "invalid_sensor"
+                _LOGGER.warning(f"Invalid PM sensor: {err}")
+            except Exception as err:
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in PM sensors options: {err}", exc_info=True)
+
+        # Show the PM sensor selection form
+        return self.async_show_form(
+            step_id="pm_sensors_options",
+            data_schema=self._schema_pm_sensors_options(),
+            errors=errors,
+        )
+
+    def _schema_pm_sensors_options(self) -> vol.Schema:
+        """Generate schema for PM sensor selection with current values as defaults."""
+        cur = self._data
+        return vol.Schema({
+            vol.Optional("pm_sensors", default=cur.get("pm_sensors", [])): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain="sensor",
+                    device_class=["pm1", "pm10", "pm25"],
+                    multiple=True,
+                )
+            ),
+        }, extra=vol.ALLOW_EXTRA)
+
+    async def async_step_pm_sensors_zones_options(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle PM sensor zone assignment in options flow."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            try:
+                # Process zone assignments
+                sensors = self._data.get("pm_sensors", [])
+                zones = []
+                for i in range(len(sensors)):
+                    zone_key = f"pm_sensor_{i}_zone"
+                    zone_value = user_input.get(zone_key, "1")
+                    try:
+                        zones.append(int(zone_value))
+                    except ValueError:
+                        zones.append(1)
+                
+                # Store zone assignments
+                self._data["pm_sensor_zones"] = zones
+                
+                # Continue to next newly enabled sensor type or finish
+                return await self._next_sensor_step_options("pm")
+                    
+            except Exception as err:
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in PM zones options: {err}", exc_info=True)
+
+        # Show the zone assignment form
+        return self.async_show_form(
+            step_id="pm_sensors_zones_options",
+            data_schema=self._schema_pm_sensors_zones_options(),
+            errors=errors,
+        )
+
+    def _schema_pm_sensors_zones_options(self) -> vol.Schema:
+        """Generate schema for PM sensor zone assignment with current values as defaults."""
+        cur = self._data
+        sensors = cur.get("pm_sensors", [])
+        current_zones = cur.get("pm_sensor_zones", [])
+        num_zones = cur.get("num_zones", 1)
+        
+        if not sensors or num_zones <= 1:
+            return vol.Schema({}, extra=vol.ALLOW_EXTRA)
+        
+        zone_options = get_zone_options(num_zones)
+        schema_dict = {}
+        
+        for i, sensor in enumerate(sensors):
+            current_zone = str(current_zones[i]) if i < len(current_zones) else "1"
+            field_key = f"pm_sensor_{i}_zone"
+            
+            schema_dict[vol.Required(field_key, default=current_zone)] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=zone_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+        
+        return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
+
+    # Humidity sensor options --------------------------------------------------
+    async def async_step_humidity_sensors_options(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle Humidity sensor selection in options flow."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            try:
+                # Store Humidity sensors
+                sensors = user_input.get("humidity_sensors", [])
+                if not isinstance(sensors, list):
+                    sensors = [sensors] if sensors else []
+                sensors = [s for s in sensors if s]
+                
+                # Enable Humidity sensors if any are selected
+                if sensors:
+                    self._data["use_humidity_sensors"] = True
+                    self._data["humidity_sensors"] = sensors
+                else:
+                    # If no sensors selected, disable Humidity sensors
+                    self._data["use_humidity_sensors"] = False
+                    self._data["humidity_sensors"] = []
+                
+                # Handle zone assignments if multiple zones and sensors exist
+                num_zones = self._data.get("num_zones", 1)
+                if num_zones > 1 and sensors:
+                    return await self.async_step_humidity_sensors_zones_options()
+                else:
+                    # Single zone or no sensors, assign all to zone 1
+                    self._data["humidity_sensor_zones"] = [1] * len(sensors)
+                    
+                    # Humidity is the last sensor type, always save and complete
+                    return await self._next_sensor_step_options("humidity")
+                    
+            except InvalidSensor as err:
+                errors["humidity_sensors"] = "invalid_sensor"
+                _LOGGER.warning(f"Invalid Humidity sensor: {err}")
+            except Exception as err:
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in Humidity sensors options: {err}", exc_info=True)
+
+        # Show the Humidity sensor selection form
+        return self.async_show_form(
+            step_id="humidity_sensors_options",
+            data_schema=self._schema_humidity_sensors_options(),
+            errors=errors,
+        )
+
+    def _schema_humidity_sensors_options(self) -> vol.Schema:
+        """Generate schema for Humidity sensor selection with current values as defaults."""
+        cur = self._data
+        return vol.Schema({
+            vol.Optional("humidity_sensors", default=cur.get("humidity_sensors", [])): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain="sensor",
+                    device_class="humidity",
+                    multiple=True,
+                )
+            ),
+        }, extra=vol.ALLOW_EXTRA)
+
+    async def async_step_humidity_sensors_zones_options(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle Humidity sensor zone assignment in options flow."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            try:
+                # Process zone assignments
+                sensors = self._data.get("humidity_sensors", [])
+                zones = []
+                for i in range(len(sensors)):
+                    zone_key = f"humidity_sensor_{i}_zone"
+                    zone_value = user_input.get(zone_key, "1")
+                    try:
+                        zones.append(int(zone_value))
+                    except ValueError:
+                        zones.append(1)
+                
+                # Store zone assignments
+                self._data["humidity_sensor_zones"] = zones
+                
+                # Humidity is the last sensor type, always save and complete
+                return await self._next_sensor_step_options("humidity")
+                    
+            except Exception as err:
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in Humidity zones options: {err}", exc_info=True)
+
+        # Show the zone assignment form
+        return self.async_show_form(
+            step_id="humidity_sensors_zones_options",
+            data_schema=self._schema_humidity_sensors_zones_options(),
+            errors=errors,
+        )
+
+    def _schema_humidity_sensors_zones_options(self) -> vol.Schema:
+        """Generate schema for Humidity sensor zone assignment with current values as defaults."""
+        cur = self._data
+        sensors = cur.get("humidity_sensors", [])
+        current_zones = cur.get("humidity_sensor_zones", [])
+        num_zones = cur.get("num_zones", 1)
+        
+        if not sensors or num_zones <= 1:
+            return vol.Schema({}, extra=vol.ALLOW_EXTRA)
+        
+        zone_options = get_zone_options(num_zones)
+        schema_dict = {}
+        
+        for i, sensor in enumerate(sensors):
+            current_zone = str(current_zones[i]) if i < len(current_zones) else "1"
+            field_key = f"humidity_sensor_{i}_zone"
+            
+            schema_dict[vol.Required(field_key, default=current_zone)] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=zone_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+        
+        return vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA)
+
+    # Helper method for navigation ----------------------------------------------
+    async def _next_sensor_step_options(self, completed_sensor_type: str) -> FlowResult:
+        """Navigate to the next newly enabled sensor type or finish sensor configuration."""
+        # Get current vs old configuration to determine newly enabled types
+        old_data = {**self.config_entry.data, **self.config_entry.options}
+        
+        # Find remaining newly enabled sensor types after the completed one
+        sensor_order = ["co2", "voc", "pm", "humidity"]
+        completed_index = sensor_order.index(completed_sensor_type) if completed_sensor_type in sensor_order else -1
+        
+        for i, sensor_name in enumerate(sensor_order):
+            if i <= completed_index:
+                continue  # Skip completed and earlier sensor types
+                
+            sensor_type_key = f"use_{sensor_name}_sensors"
+            # Only go to this sensor type if it's newly enabled (enabled now but wasn't before)
+            if (self._data.get(sensor_type_key) and not old_data.get(sensor_type_key, False)):
+                if sensor_name == "voc":
+                    return await self.async_step_voc_sensors_options()
+                elif sensor_name == "pm":
+                    return await self.async_step_pm_sensors_options()
+                elif sensor_name == "humidity":
+                    return await self.async_step_humidity_sensors_options()
+        
+        # No more newly enabled sensor types, save and complete
+        sensor_data = {}
+        for key in ("use_co2_sensors", "use_voc_sensors", "use_pm_sensors", "use_humidity_sensors",
+                   "co2_sensors", "voc_sensors", "pm_sensors", "humidity_sensors",
+                   "co2_sensor_zones", "voc_sensor_zones", "pm_sensor_zones", "humidity_sensor_zones"):
+            if key in self._data:
+                sensor_data[key] = self._data[key]
+        
+        return self.async_create_entry(title="", data={**self.config_entry.options, **sensor_data})
+
+    # Device selection options --------------------------------------------------
+    async def async_step_device_selection(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle device selection in options flow."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            try:
+                # Validate the device selection input
+                info = await validate_device_selection_input(self.hass, user_input)
+                
+                # Store device selection data
+                updated_data = {}
+                updated_data["remote_device"] = user_input["remote_device"]
+                updated_data["fan_device"] = user_input["fan_device"]
+                
+                # Handle num_zones changes
+                new_num_zones = int(user_input.get("num_zones", 1))
+                old_num_zones = self._data.get("num_zones", 1)
+                updated_data["num_zones"] = new_num_zones
+                
+                # Extract device serial numbers for prefilling zone configs
+                remote_serial = await get_device_serial_number(self.hass, user_input["remote_device"])
+                fan_serial = await get_device_serial_number(self.hass, user_input["fan_device"])
+                updated_data["remote_serial"] = remote_serial or ""
+                updated_data["fan_serial"] = fan_serial or ""
+                
+                # Handle zone_configs changes when num_zones changes
+                current_zone_configs = self._data.get("zone_configs", {})
+                
+                if new_num_zones != old_num_zones:
+                    # Adjust zone configurations
+                    new_zone_configs = {}
+                    
+                    # Copy existing zone configs up to the new number of zones
+                    for zone_num in range(1, min(new_num_zones, old_num_zones) + 1):
+                        if zone_num in current_zone_configs:
+                            new_zone_configs[zone_num] = current_zone_configs[zone_num].copy()
+                            # Update device serials in existing configs
+                            new_zone_configs[zone_num]["id_from"] = remote_serial or new_zone_configs[zone_num].get("id_from", "")
+                            new_zone_configs[zone_num]["id_to"] = fan_serial or new_zone_configs[zone_num].get("id_to", "")
+                    
+                    # Add new zone configs if zones increased
+                    if new_num_zones > old_num_zones:
+                        for zone_num in range(old_num_zones + 1, new_num_zones + 1):
+                            new_zone_configs[zone_num] = {
+                                "id_from": remote_serial or "",
+                                "id_to": fan_serial or "",
+                                "sensor_id": 256 - zone_num,  # Default sensor IDs: 255, 254, 253, etc.
+                                "min_fan_rate": 0,
+                                "max_fan_rate": 255,
+                            }
+                    
+                    updated_data["zone_configs"] = new_zone_configs
+                else:
+                    # Same number of zones, just update device serials
+                    updated_zone_configs = {}
+                    for zone_num, zone_config in current_zone_configs.items():
+                        updated_zone_configs[zone_num] = zone_config.copy()
+                        updated_zone_configs[zone_num]["id_from"] = remote_serial or zone_config.get("id_from", "")
+                        updated_zone_configs[zone_num]["id_to"] = fan_serial or zone_config.get("id_to", "")
+                    updated_data["zone_configs"] = updated_zone_configs
+                
+                # Create the entry with updated data
+                return self.async_create_entry(title="", data={**self.config_entry.options, **updated_data})
+                
+            except InvalidEntity as err:
+                # Determine which device field had the error
+                error_msg = str(err).lower()
+                if "remote" in error_msg:
+                    errors["remote_device"] = str(err)
+                elif "fan" in error_msg:
+                    errors["fan_device"] = str(err)
+                else:
+                    errors["base"] = str(err)
+                _LOGGER.warning(f"Invalid entity: {err}")
+            except Exception as err:
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in device selection options: {err}", exc_info=True)
+
+        # Show the device selection form with current values as defaults
+        return self.async_show_form(
+            step_id="device_selection",
+            data_schema=self._schema_device_selection(),
+            errors=errors,
+        )
+
+    def _schema_device_selection(self) -> vol.Schema:
+        """Generate schema for device selection options with current values as defaults."""
+        cur = self._data
+        return vol.Schema({
+            vol.Required("remote_device", default=cur.get("remote_device")): selector.DeviceSelector(
+                selector.DeviceSelectorConfig(integration="ramses_cc")
+            ),
+            vol.Required("fan_device", default=cur.get("fan_device")): selector.DeviceSelector(
+                selector.DeviceSelectorConfig(integration="ramses_cc")
+            ),
+            vol.Optional("num_zones", default=str(cur.get("num_zones", 1))): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(value="1", label="1 Zone"),
+                        selector.SelectOptionDict(value="2", label="2 Zones"), 
+                        selector.SelectOptionDict(value="3", label="3 Zones"),
+                        selector.SelectOptionDict(value="4", label="4 Zones"),
+                        selector.SelectOptionDict(value="5", label="5 Zones"),
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN
+                )
+            ),
+        }, extra=vol.ALLOW_EXTRA)
+
+    # Zone configuration options ----------------------------------------------
+    async def async_step_zone_1_config(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle zone 1 configuration in options flow."""
+        return await self._async_step_zone_config_options(1, user_input)
+
+    async def async_step_zone_2_config(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle zone 2 configuration in options flow."""
+        return await self._async_step_zone_config_options(2, user_input)
+
+    async def async_step_zone_3_config(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle zone 3 configuration in options flow."""
+        return await self._async_step_zone_config_options(3, user_input)
+
+    async def async_step_zone_4_config(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle zone 4 configuration in options flow."""
+        return await self._async_step_zone_config_options(4, user_input)
+
+    async def async_step_zone_5_config(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle zone 5 configuration in options flow."""
+        return await self._async_step_zone_config_options(5, user_input)
+
+    async def _async_step_zone_config_options(
+        self, zone_number: int, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle zone configuration step for any zone number in options flow."""
+        errors: dict[str, str] = {}
+        
+        if user_input is not None:
+            try:
+                # Validate the zone configuration input
+                info = await validate_zone_config_input(self.hass, user_input, zone_number)
+                
+                # Update zone configuration data
+                current_zone_configs = self._data.get("zone_configs", {})
+                current_zone_configs[zone_number] = {
+                    "id_from": user_input["id_from"],
+                    "id_to": user_input["id_to"],
+                    "sensor_id": user_input["sensor_id"],
+                    "min_fan_rate": user_input["min_fan_rate"],
+                    "max_fan_rate": user_input["max_fan_rate"],
+                }
+                
+                # Create the entry with updated zone config
+                return self.async_create_entry(title="", data={**self.config_entry.options, "zone_configs": current_zone_configs})
+                
+            except InvalidZoneConfig as err:
+                # Provide specific error messages based on validation
+                error_msg = str(err).lower()
+                if "id_from" in error_msg:
+                    errors["id_from"] = str(err)
+                elif "id_to" in error_msg:
+                    errors["id_to"] = str(err)
+                elif "sensor_id" in error_msg:
+                    errors["sensor_id"] = str(err)
+                elif "min_fan" in error_msg:
+                    errors["min_fan_rate"] = str(err)
+                elif "max_fan" in error_msg:
+                    errors["max_fan_rate"] = str(err)
+                else:
+                    errors["base"] = str(err)
+                _LOGGER.warning(f"Invalid zone config: {err}")
+            except Exception as err:
+                errors["base"] = "unknown"
+                _LOGGER.error(f"Unexpected error in zone {zone_number} config options: {err}", exc_info=True)
+
+        # Show the zone configuration form with current values as defaults
+        return self.async_show_form(
+            step_id=f"zone_{zone_number}_config",
+            data_schema=self._schema_zone_config(zone_number),
+            errors=errors,
+        )
+
+    def _schema_zone_config(self, zone_number: int) -> vol.Schema:
+        """Generate schema for zone configuration options with current values as defaults."""
+        cur = self._data
+        current_zone_config = cur.get("zone_configs", {}).get(zone_number, {})
+        remote_serial = cur.get("remote_serial", "")
+        fan_serial = cur.get("fan_serial", "")
+        
+        # Use prefilled device serials if available, otherwise use current config or empty string
+        default_id_from = current_zone_config.get("id_from", remote_serial)
+        default_id_to = current_zone_config.get("id_to", fan_serial)
+        
+        # Calculate default sensor ID: 255 for zone 1, 254 for zone 2, etc.
+        default_sensor_id = current_zone_config.get("sensor_id", 256 - zone_number)
+        
+        return vol.Schema({
+            vol.Required("id_from", default=default_id_from): cv.string,
+            vol.Required("id_to", default=default_id_to): cv.string,
+            vol.Required("sensor_id", default=default_sensor_id): vol.Coerce(int),
+            vol.Required("min_fan_rate", default=current_zone_config.get("min_fan_rate", 0)): vol.Coerce(int),
+            vol.Required("max_fan_rate", default=current_zone_config.get("max_fan_rate", 255)): vol.Coerce(int),
+        }, extra=vol.ALLOW_EXTRA)
