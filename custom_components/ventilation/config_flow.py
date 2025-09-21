@@ -2148,8 +2148,22 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     # PID settings -----------------------------------------------------------
     def _schema_pid(self) -> vol.Schema:
         cur = self._data
+        
+        # Try to get the current live value from the setpoint entity
+        current_setpoint = cur.get("setpoint", 0.5)  # Default fallback
+        try:
+            # Get the live value from the setpoint entity state
+            setpoint_entity_id = f"number.{DOMAIN}_{self.config_entry.entry_id}_setpoint"
+            setpoint_state = self.hass.states.get(setpoint_entity_id)
+            if setpoint_state and setpoint_state.state not in ("unknown", "unavailable"):
+                live_setpoint = float(setpoint_state.state)
+                current_setpoint = live_setpoint
+        except (ValueError, TypeError):
+            # If we can't get the live value, stick with the configured value
+            pass
+        
         return vol.Schema({
-            vol.Required("setpoint", default=cur.get("setpoint", 0.5)): vol.Coerce(float),
+            vol.Required("setpoint", default=current_setpoint): vol.Coerce(float),
             vol.Required("kp", default=cur.get("kp", 25.5)): vol.Coerce(float),
             vol.Required("ki_times", default=",".join(map(str, cur.get("ki_times", [3600, 1800, 900, 450, 225, 150])))): cv.string,
             vol.Required("update_interval", default=cur.get("update_interval", 300)): vol.Coerce(int),
