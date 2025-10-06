@@ -1,0 +1,33 @@
+# Services for PID Ventilation Control integration
+# These services are dynamically registered based on configured zones
+
+# Template for bind_co2_n services (where n is the zone number)
+# Example: bind_co2_1, bind_co2_2, etc.
+
+bind_co2_1:
+  name: "Bind CO2 Sensor to Zone 1"
+  description: "Execute 1FC9 binding sequence to bind a CO2 sensor to Zone 1"
+  fields: {}
+
+bind_co2_2:
+  name: "Bind CO2 Sensor to Zone 2" 
+  description: "Execute 1FC9 binding sequence to bind a CO2 sensor to Zone 2"
+  fields: {}
+
+bind_co2_3:
+  name: "Bind CO2 Sensor to Zone 3"
+  description: "Execute 1FC9 binding sequence to bind a CO2 sensor to Zone 3"
+  fields: {}
+
+bind_co2_4:
+  name: "Bind CO2 Sensor to Zone 4"
+  description: "Execute 1FC9 binding sequence to bind a CO2 sensor to Zone 4"
+  fields: {}
+
+bind_co2_5:
+  name: "Bind CO2 Sensor to Zone 5"
+  description: "Execute 1FC9 binding sequence to bind a CO2 sensor to Zone 5"
+  fields: {}
+
+# Note: Only services for configured zones will actually be registered
+# The above definitions provide descriptions when the services are available

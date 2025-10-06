@@ -1,11 +1,13 @@
 from datetime import timedelta, datetime
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.const import Platform
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
 import logging
 import numpy as np
 import time
@@ -892,6 +894,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "humidity_avg_tracker": humidity_avg_tracker,  # Store humidity moving average tracker
     }
 
+    # Register services for binding CO2 sensors to zones
+    await _register_bind_services(hass, entry, zone_configs)
+
     # Ensure switch platform is set up after state exists
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -905,9 +910,235 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+async def _register_bind_services(hass: HomeAssistant, entry: ConfigEntry, zone_configs: dict):
+    """Register bind_co2_n services for each configured zone."""
+    
+    async def handle_bind_co2_service(call: ServiceCall):
+        """Handle bind_co2_n service calls."""
+        service_name = call.service
+        zone_number = service_name.replace("bind_co2_", "")
+        
+        try:
+            zone_id = int(zone_number)  # Convert to integer, not string
+            if zone_id not in zone_configs:
+                _LOGGER.error(f"Zone {zone_number} not found in configuration. Available zones: {list(zone_configs.keys())}")
+                return
+                
+            zone_config = zone_configs[zone_id]
+            
+            # Get device IDs from zone configuration
+            device_id = zone_config.get(CONF_ZONE_ID_FROM)  # The device being bound (e.g., CO2 sensor)
+            controller_id = zone_config.get(CONF_ZONE_ID_TO)  # The controller/target device
+            
+            if not device_id or not controller_id:
+                _LOGGER.error(f"Zone {zone_number} missing ID configuration - id_from: {device_id}, id_to: {controller_id}")
+                return
+            
+            # Get remote entity from the hass data
+            domain_data = hass.data.get(DOMAIN, {})
+            entry_data = domain_data.get(entry.entry_id, {})
+            remote_entity_id = entry_data.get("remote_entity_id")
+            
+            if not remote_entity_id:
+                _LOGGER.error(f"Remote entity not found for zone {zone_number} binding")
+                return
+            
+            _LOGGER.info(f"Starting CO2 sensor binding for zone {zone_number}: {device_id} → {controller_id}")
+            
+            # Execute the binding sequence with zone-specific IDs
+            await _execute_binding_sequence(hass, device_id, controller_id, remote_entity_id, zone_number)
+            
+        except Exception as e:
+            _LOGGER.error(f"Error in bind_co2_{zone_number} service: {e}", exc_info=True)
+    
+    # Register a service for each configured zone
+    for zone_id in zone_configs.keys():
+        service_name = f"bind_co2_{zone_id}"
+        
+        # Check if service is already registered to avoid duplicates
+        if not hass.services.has_service(DOMAIN, service_name):
+            hass.services.async_register(
+                DOMAIN,
+                service_name,
+                handle_bind_co2_service,
+                schema=vol.Schema({}),  # No parameters needed
+            )
+            _LOGGER.info(f"Registered service: {DOMAIN}.{service_name}")
+
+
+def _device_id_to_hex(device_id: str) -> str:
+    """
+    Convert device ID like '29:181233' to ramses hex format.
+    
+    Uses a mathematical approach based on reverse-engineered protocol:
+    hex_value = device_type << 18 + device_number
+    
+    This gives each device type a 256K address space block.
+    """
+    parts = device_id.split(':')
+    if len(parts) != 2:
+        raise ValueError(f"Invalid device ID format: {device_id}")
+    
+    try:
+        device_type = int(parts[0])
+        device_num = int(parts[1])
+    except ValueError:
+        raise ValueError(f"Invalid device ID numbers: {device_id}")
+    
+    # Mathematical conversion based on ramses protocol analysis
+    # Each device type gets a 256K block: type << 18
+    base_offset = device_type << 18
+    hex_value = base_offset + device_num
+    
+    return f"{hex_value:06X}"
+
+
+def _create_device_offer_1fc9(device_id: str) -> str:
+    """Create device offer 1FC9 message for any device ID using the exact format from scripts.yaml."""
+    device_hex = _device_id_to_hex(device_id)
+    
+    # Use the exact same payload structure as the working scripts.yaml
+    # Format: 0031E0{device_hex}0131E0{device_hex}001298{device_hex}6710E0{device_hex}001FC9{device_hex}
+    payload = f"0031E0{device_hex}0131E0{device_hex}001298{device_hex}6710E0{device_hex}001FC9{device_hex}"
+    return payload
+
+
+def _create_device_confirm_1fc9() -> str:
+    """Create device confirmation 1FC9 message (always '00')."""
+    return "00"
+
+
+async def _execute_binding_sequence(hass: HomeAssistant, device_id: str, controller_id: str, remote_entity_id: str, zone_number: str):
+    """Execute the 1FC9 binding sequence for a CO2 sensor."""
+    
+    try:
+        _LOGGER.info(f"Starting 1FC9 binding sequence for zone {zone_number}: {device_id} → {controller_id}")
+        
+        # Generate dynamic payloads based on actual device IDs
+        device_offer_payload = _create_device_offer_1fc9(device_id)
+        device_confirm_payload = _create_device_confirm_1fc9()
+        
+        _LOGGER.debug(f"Generated payloads - Offer: {device_offer_payload}, Confirm: {device_confirm_payload}")
+        
+        # Create unique command names for this binding sequence
+        offer_cmd = f"bind_offer_{zone_number}"
+        confirm_cmd = f"bind_confirm_{zone_number}"
+        info_cmd = f"bind_info_{zone_number}"
+        request_cmd = f"bind_request_{zone_number}"
+        
+        # Add all commands first
+        commands_to_add = [
+            (offer_cmd, f" I --- {device_id} 63:262142 --:------ 1FC9 030 {device_offer_payload}"),
+            (confirm_cmd, f" I --- {device_id} {controller_id} --:------ 1FC9 001 {device_confirm_payload}"),
+            (info_cmd, f" I --- {device_id} 63:262142 --:------ 10E0 038 000001C8500B0167FEFFFFFFFFFF090307E1564D532D31354331360000000000000000000000"),
+            (request_cmd, f"RQ --- {device_id} {controller_id} --:------ 31D9 001 00"),
+        ]
+        
+        for cmd_name, packet_string in commands_to_add:
+            try:
+                await hass.services.async_call(
+                    "ramses_cc", "add_command",
+                    {
+                        "entity_id": remote_entity_id,
+                        "command": cmd_name,
+                        "packet_string": packet_string
+                    },
+                    blocking=True
+                )
+                _LOGGER.debug(f"Added command '{cmd_name}': {packet_string}")
+            except Exception as e:
+                _LOGGER.error(f"Failed to add command '{cmd_name}': {e}")
+                return
+        
+        # Give ramses_cc a moment to process all add_command calls
+        await hass.async_add_executor_job(time.sleep, 0.5)
+        
+        # Step 1: Device broadcasts capabilities offer
+        await hass.services.async_call(
+            "ramses_cc",
+            "send_command",
+            {
+                "command": offer_cmd,
+                "num_repeats": 1,
+                "delay_secs": 0.5
+            },
+            target={"entity_id": remote_entity_id}
+        )
+        
+        # Short delay before device confirm (200ms as per scripts.yaml)
+        await hass.async_add_executor_job(time.sleep, 0.2)
+        
+        # Step 2: Device confirms binding
+        await hass.services.async_call(
+            "ramses_cc",
+            "send_command",
+            {
+                "command": confirm_cmd,
+                "num_repeats": 1,
+                "delay_secs": 0.5
+            },
+            target={"entity_id": remote_entity_id}
+        )
+        
+        # Delay before device info broadcast (1 second as per scripts.yaml)
+        await hass.async_add_executor_job(time.sleep, 1.0)
+        
+        # Step 3: Device broadcasts device information
+        await hass.services.async_call(
+            "ramses_cc",
+            "send_command",
+            {
+                "command": info_cmd,
+                "num_repeats": 1,
+                "delay_secs": 0.5
+            },
+            target={"entity_id": remote_entity_id}
+        )
+        
+        # Delay before sensor config request (2 seconds as per scripts.yaml)
+        await hass.async_add_executor_job(time.sleep, 2.0)
+        
+        # Step 4: Device requests sensor configuration
+        await hass.services.async_call(
+            "ramses_cc",
+            "send_command",
+            {
+                "command": request_cmd,
+                "num_repeats": 1,
+                "delay_secs": 0.5
+            },
+            target={"entity_id": remote_entity_id}
+        )
+        
+        _LOGGER.info(f"Completed 1FC9 binding sequence for zone {zone_number}")
+        
+    except Exception as e:
+        _LOGGER.error(f"Error executing binding sequence for zone {zone_number}: {e}", exc_info=True)
+
+
+async def _unregister_bind_services(hass: HomeAssistant, entry: ConfigEntry):
+    """Unregister bind_co2_n services for this entry."""
+    try:
+        # Get zone configs to know which services to remove
+        cfg = {**entry.data, **entry.options}
+        zone_configs = cfg.get(CONF_ZONE_CONFIGS, {})
+        
+        for zone_id in zone_configs.keys():
+            service_name = f"bind_co2_{zone_id}"
+            if hass.services.has_service(DOMAIN, service_name):
+                hass.services.async_remove(DOMAIN, service_name)
+                _LOGGER.info(f"Unregistered service: {DOMAIN}.{service_name}")
+                
+    except Exception as e:
+        _LOGGER.error(f"Error unregistering bind services: {e}")
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry with improved error handling."""
     _LOGGER.debug(f"Starting unload for config entry {entry.entry_id}")
+    
+    # Remove registered services for this entry
+    await _unregister_bind_services(hass, entry)
     
     unload_ok = True
     try:

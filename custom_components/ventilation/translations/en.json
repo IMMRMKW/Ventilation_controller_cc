@@ -639,5 +639,27 @@
         "name": "Setpoint"
       }
     }
+  },
+  "services": {
+    "bind_co2_1": {
+      "name": "Bind CO2 Sensor to Zone 1",
+      "description": "Execute 1FC9 binding sequence to bind a CO2 sensor to Zone 1 of the ventilation system"
+    },
+    "bind_co2_2": {
+      "name": "Bind CO2 Sensor to Zone 2", 
+      "description": "Execute 1FC9 binding sequence to bind a CO2 sensor to Zone 2 of the ventilation system"
+    },
+    "bind_co2_3": {
+      "name": "Bind CO2 Sensor to Zone 3",
+      "description": "Execute 1FC9 binding sequence to bind a CO2 sensor to Zone 3 of the ventilation system"
+    },
+    "bind_co2_4": {
+      "name": "Bind CO2 Sensor to Zone 4",
+      "description": "Execute 1FC9 binding sequence to bind a CO2 sensor to Zone 4 of the ventilation system"
+    },
+    "bind_co2_5": {
+      "name": "Bind CO2 Sensor to Zone 5",
+      "description": "Execute 1FC9 binding sequence to bind a CO2 sensor to Zone 5 of the ventilation system"
+    }
   }
 }
