@@ -784,7 +784,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     # Get zone-specific parameters
                     id_from = zone_config.get(CONF_ZONE_ID_FROM)
                     id_to = zone_config.get(CONF_ZONE_ID_TO)
-                    sensor_id = zone_config.get(CONF_ZONE_SENSOR_ID, 256 - zone_id)  # Default to 255 for zone 1, 254 for zone 2, etc.
+                    sensor_id = zone_config.get(CONF_ZONE_SENSOR_ID, 256 - int(zone_id))  # Default to 255 for zone 1, 254 for zone 2, etc.
                     zone_min = zone_config.get(CONF_ZONE_MIN_FAN, 0)
                     zone_max = zone_config.get(CONF_ZONE_MAX_FAN, 255)
                     

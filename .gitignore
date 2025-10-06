@@ -44,28 +44,18 @@ __pycache__/
 .venv/
 
 # Development and analysis files
-all_hex_codes_31E0.txt
+
+# Log files in top folder
+/*.log
+
+# Python files in top folder
+/*.py
+
+/*.yaml
+
 Config_flow.pdf
 config_flow.txt
-createLines.py
-findLines.py
-generate_all_hex_codes.py
-lines_with_32_146231.txt
-lines_with_32_146231_sorted.txt
-logfile.txt
-logfile_from_31E0.txt
-logfile_from_31E0_nodupes.txt
-logfile_from_31E0_sorted.txt
-logfile_medium_format.txt
-matching.py
-matching.txt
-simulation.py
-sortFancommands.py
-sort_by_timestamp.py
-log.txt
-log2.txt
-log3.txt
-log4.txt
+1fc9_binding_29_181233.md
 
 # Configuration files (optional - uncomment if you want to ignore these)
 # configuration_example.yaml
