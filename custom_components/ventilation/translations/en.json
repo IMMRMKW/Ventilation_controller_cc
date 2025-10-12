@@ -2,122 +2,119 @@
   "config": {
     "step": {
       "user": {
-        "title": "Device Selection",
-        "description": "Select your ventilation system devices and number of zones",
+        "title": "Device Configuration",
+        "description": "Select your ramses_cc remote device and number of zones",
         "data": {
           "remote_device": "Select your remote control device",
-          "fan_device": "Select your fan device",
-          "num_zones": "Number of ventilation zones"
+          "num_zones": "Select number of ventilation zones"
         },
         "data_description": {
           "remote_device": "The ramses_cc remote device to control the system",
-          "fan_device": "The physical fan device to control",
-          "num_zones": "Enter the number of ventilation zones (1-5). Each zone will have its own message ID and fan rate settings."
+          "num_zones": "Enter the number of ventilation zones (1-5). Each zone will have its own device IDs and fan rate settings."
         }
       },
-      "fan_settings": {
-        "title": "Fan Settings",
-        "description": "Configure your ventilation fan speed settings",
+      "device_configuration": {
+        "title": "Device Configuration",
+        "description": "Select your ramses_cc remote device and number of zones",
         "data": {
-          "min_fan_output": "Minimum Fan Output",
-          "max_fan_output": "Maximum Fan Output",
-          "back": "Back"
+          "remote_device": "Select your remote control device",
+          "num_zones": "Select number of ventilation zones"
         },
         "data_description": {
-          "min_fan_output": "Minimum fan speed value (0-254)",
-          "max_fan_output": "Maximum fan speed value (1-255)"
+          "remote_device": "The ramses_cc remote device to control the system",
+          "num_zones": "Enter the number of ventilation zones (1-5). Each zone will have its own device IDs and fan rate settings."
         }
       },
       "zone_config_1": {
-        "title": "Zone 1: Message Configuration",
-        "description": "Configure message IDs and fan rate limits for Zone 1",
+        "title": "Zone 1: Device Configuration",
+        "description": "Select devices and configure fan rate limits for Zone 1",
         "data": {
-          "id_from": "ID From (Remote Device)",
-          "id_to": "ID To (Zone Device)",
+          "device_from": "From Device (Source)",
+          "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate",
           "back": "Back"
         },
         "data_description": {
-          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
-          "id_to": "Target device ID (e.g., '32:146231' for zone fan/valve)",
+          "device_from": "Source device (typically your remote control device)",
+          "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
       },
       "zone_config_2": {
-        "title": "Zone 2: Message Configuration",
-        "description": "Configure message IDs and fan rate limits for Zone 2",
+        "title": "Zone 2: Device Configuration",
+        "description": "Select devices and configure fan rate limits for Zone 2",
         "data": {
-          "id_from": "ID From (Remote Device)",
-          "id_to": "ID To (Zone Device)",
+          "device_from": "From Device (Source)",
+          "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate",
           "back": "Back"
         },
         "data_description": {
-          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
-          "id_to": "Target device ID (e.g., '32:146232' for zone fan/valve)",
+          "device_from": "Source device (typically your remote control device)",
+          "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
       },
       "zone_config_3": {
-        "title": "Zone 3: Message Configuration",
-        "description": "Configure message IDs and fan rate limits for Zone 3",
+        "title": "Zone 3: Device Configuration",
+        "description": "Select devices and configure fan rate limits for Zone 3",
         "data": {
-          "id_from": "ID From (Remote Device)",
-          "id_to": "ID To (Zone Device)",
+          "device_from": "From Device (Source)",
+          "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate",
           "back": "Back"
         },
         "data_description": {
-          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
-          "id_to": "Target device ID (e.g., '32:146233' for zone fan/valve)",
+          "device_from": "Source device (typically your remote control device)",
+          "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
       },
       "zone_config_4": {
-        "title": "Zone 4: Message Configuration",
-        "description": "Configure message IDs and fan rate limits for Zone 4",
+        "title": "Zone 4: Device Configuration",
+        "description": "Select devices and configure fan rate limits for Zone 4",
         "data": {
-          "id_from": "ID From (Remote Device)",
-          "id_to": "ID To (Zone Device)",
+          "device_from": "From Device (Source)",
+          "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate",
           "back": "Back"
         },
         "data_description": {
-          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
-          "id_to": "Target device ID (e.g., '32:146234' for zone fan/valve)",
+          "device_from": "Source device (typically your remote control device)",
+          "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
       },
       "zone_config_5": {
-        "title": "Zone 5: Message Configuration",
-        "description": "Configure message IDs and fan rate limits for Zone 5",
+        "title": "Zone 5: Device Configuration",
+        "description": "Select devices and configure fan rate limits for Zone 5",
         "data": {
-          "id_from": "ID From (Remote Device)",
-          "id_to": "ID To (Zone Device)",
+          "device_from": "From Device (Source)",
+          "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate",
           "back": "Back"
         },
         "data_description": {
-          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
-          "id_to": "Target device ID (e.g., '32:146235' for zone fan/valve)",
+          "device_from": "Source device (typically your remote control device)",
+          "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
@@ -335,12 +332,12 @@
         "title": "Options",
         "description": "Choose which settings to configure",
         "menu_options": {
-          "device_selection": "Device Selection",
-          "zone_1_config": "Zone 1: Message Configuration",
-          "zone_2_config": "Zone 2: Message Configuration", 
-          "zone_3_config": "Zone 3: Message Configuration",
-          "zone_4_config": "Zone 4: Message Configuration",
-          "zone_5_config": "Zone 5: Message Configuration",
+          "device_configuration": "Device Configuration",
+          "zone_1_config": "Zone 1: Device Configuration",
+          "zone_2_config": "Zone 2: Device Configuration", 
+          "zone_3_config": "Zone 3: Device Configuration",
+          "zone_4_config": "Zone 4: Device Configuration",
+          "zone_5_config": "Zone 5: Device Configuration",
           "sensor_types": "Sensor Types",
           "co2_sensors_options": "CO2 Sensors",
           "voc_sensors_options": "VOC Sensors", 
@@ -355,8 +352,7 @@
         "data": {
           "min_fan_output": "Minimum Fan Output",
           "max_fan_output": "Maximum Fan Output",
-          "remote_device": "Select your remote control device",
-          "fan_device": "Select your fan"
+          "remote_device": "Select your remote control device"
         }
       },
       "sensor_settings": {
@@ -399,105 +395,91 @@
           "update_interval": "How often to check sensors and adjust the fan (10-3600 seconds). Should be larger than your ramses_cc gateway scan interval for optimal performance."
         }
       },
-      "device_selection": {
-        "title": "Device Selection",
-        "description": "Select your ventilation system devices and number of zones",
-        "data": {
-          "remote_device": "Select your remote control device",
-          "fan_device": "Select your fan device",
-          "num_zones": "Number of ventilation zones"
-        },
-        "data_description": {
-          "remote_device": "The ramses_cc remote device to control the system",
-          "fan_device": "The physical fan device to control",
-          "num_zones": "Enter the number of ventilation zones (1-5). Each zone will have its own message ID and fan rate settings."
-        }
-      },
       "zone_1_config": {
-        "title": "Zone 1: Message Configuration",
-        "description": "Configure message IDs and fan rate limits for Zone 1",
+        "title": "Zone 1: Device Configuration",
+        "description": "Select devices and configure fan rate limits for Zone 1",
         "data": {
-          "id_from": "ID From (Remote Device)",
-          "id_to": "ID To (Zone Device)",
+          "device_from": "From Device (Source)",
+          "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate"
         },
         "data_description": {
-          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
-          "id_to": "Target device ID (e.g., '32:146231' for zone fan/valve)",
+          "device_from": "Source device (typically your remote control device)",
+          "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
       },
       "zone_2_config": {
-        "title": "Zone 2: Message Configuration",
-        "description": "Configure message IDs and fan rate limits for Zone 2",
+        "title": "Zone 2: Device Configuration",
+        "description": "Select devices and configure fan rate limits for Zone 2",
         "data": {
-          "id_from": "ID From (Remote Device)",
-          "id_to": "ID To (Zone Device)",
+          "device_from": "From Device (Source)",
+          "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate"
         },
         "data_description": {
-          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
-          "id_to": "Target device ID (e.g., '32:146232' for zone fan/valve)",
+          "device_from": "Source device (typically your remote control device)",
+          "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
       },
       "zone_3_config": {
-        "title": "Zone 3: Message Configuration",
-        "description": "Configure message IDs and fan rate limits for Zone 3",
+        "title": "Zone 3: Device Configuration",
+        "description": "Select devices and configure fan rate limits for Zone 3",
         "data": {
-          "id_from": "ID From (Remote Device)",
-          "id_to": "ID To (Zone Device)",
+          "device_from": "From Device (Source)",
+          "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate"
         },
         "data_description": {
-          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
-          "id_to": "Target device ID (e.g., '32:146233' for zone fan/valve)",
+          "device_from": "Source device (typically your remote control device)",
+          "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
       },
       "zone_4_config": {
-        "title": "Zone 4: Message Configuration",
-        "description": "Configure message IDs and fan rate limits for Zone 4",
+        "title": "Zone 4: Device Configuration",
+        "description": "Select devices and configure fan rate limits for Zone 4",
         "data": {
-          "id_from": "ID From (Remote Device)",
-          "id_to": "ID To (Zone Device)",
+          "device_from": "From Device (Source)",
+          "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate"
         },
         "data_description": {
-          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
-          "id_to": "Target device ID (e.g., '32:146234' for zone fan/valve)",
+          "device_from": "Source device (typically your remote control device)",
+          "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
         }
       },
       "zone_5_config": {
-        "title": "Zone 5: Message Configuration",
-        "description": "Configure message IDs and fan rate limits for Zone 5",
+        "title": "Zone 5: Device Configuration",
+        "description": "Select devices and configure fan rate limits for Zone 5",
         "data": {
-          "id_from": "ID From (Remote Device)",
-          "id_to": "ID To (Zone Device)",
+          "device_from": "From Device (Source)",
+          "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
           "min_fan_rate": "Minimum Fan Rate",
           "max_fan_rate": "Maximum Fan Rate"
         },
         "data_description": {
-          "id_from": "Source device ID (e.g., '29:162275' for remote device)",
-          "id_to": "Target device ID (e.g., '32:146235' for zone fan/valve)",
+          "device_from": "Source device (typically your remote control device)",
+          "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
           "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
           "max_fan_rate": "Maximum fan speed value for this zone (0-255)"

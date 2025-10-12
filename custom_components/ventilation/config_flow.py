@@ -55,8 +55,10 @@ def get_entity_display_name(hass: HomeAssistant, entity_id: str) -> str:
     # Final fallback to entity_id formatted nicely
     return entity_id.split('.')[-1].replace('_', ' ').title()
 
-async def get_device_serial_number(hass: HomeAssistant, device_id: str) -> str | None:
+async def get_device_serial_number(hass: HomeAssistant, device_id: str | None) -> str | None:
     """Extract serial number from a device ID."""
+    if not device_id:
+        return None
     try:
         device_registry = dr.async_get(hass)
         device = device_registry.async_get(device_id)
@@ -70,12 +72,9 @@ async def get_device_serial_number(hass: HomeAssistant, device_id: str) -> str |
     return None
 
 def get_device_selection_schema():
-    """Generate schema for device selection (remote, fan, number of zones)."""
+    """Generate schema for device selection (remote device and number of zones)."""
     return vol.Schema({
         vol.Required("remote_device"): selector.DeviceSelector(
-            selector.DeviceSelectorConfig(integration="ramses_cc")
-        ),
-        vol.Required("fan_device"): selector.DeviceSelector(
             selector.DeviceSelectorConfig(integration="ramses_cc")
         ),
         vol.Optional("num_zones", default="1"): selector.SelectSelector(
@@ -110,32 +109,63 @@ def get_basic_schema():
         vol.Required("remote_device"): selector.DeviceSelector(
             selector.DeviceSelectorConfig(integration="ramses_cc")
         ),
-        vol.Required("fan_device"): selector.DeviceSelector(
-            selector.DeviceSelectorConfig(integration="ramses_cc")
-        ),
     }, extra=vol.ALLOW_EXTRA)
 
 
-def get_zone_config_schema(zone_number: int, current_config: dict = None, remote_serial: str = "", fan_serial: str = ""):
-    """Generate schema for zone configuration (message IDs and fan settings)."""
+def get_zone_config_schema(zone_number: int, current_config: dict = None, remote_device_id: str = None):
+    """Generate schema for zone configuration (device selection and fan settings)."""
     if current_config is None:
         current_config = {}
     
-    # Use prefilled device serials if available, otherwise use current config or empty string
-    default_id_from = current_config.get("id_from", remote_serial)
-    default_id_to = current_config.get("id_to", fan_serial)
+    # Use device IDs if available, otherwise fall back to remote device for id_from
+    default_device_from = current_config.get("device_from", remote_device_id)
+    default_device_to = current_config.get("device_to", None)
     
     # Calculate default sensor ID: 255 for zone 1, 254 for zone 2, etc.
     default_sensor_id = current_config.get("sensor_id", 256 - zone_number)
     
-    return vol.Schema({
-        vol.Required("id_from", default=default_id_from): cv.string,
-        vol.Required("id_to", default=default_id_to): cv.string,
-        vol.Required("sensor_id", default=default_sensor_id): vol.Coerce(int),
-        vol.Required("min_fan_rate", default=current_config.get("min_fan_rate", 0)): vol.Coerce(int),
-        vol.Required("max_fan_rate", default=current_config.get("max_fan_rate", 255)): vol.Coerce(int),
-        vol.Optional("back", default=False): selector.BooleanSelector(),
-    }, extra=vol.ALLOW_EXTRA)
+    try:
+        # Build schema fields conditionally to avoid None defaults
+        schema_fields = {}
+        
+        # Add device_from field
+        if default_device_from:
+            schema_fields[vol.Optional("device_from", default=default_device_from)] = selector.DeviceSelector(
+                selector.DeviceSelectorConfig(integration="ramses_cc")
+            )
+        else:
+            schema_fields[vol.Optional("device_from")] = selector.DeviceSelector(
+                selector.DeviceSelectorConfig(integration="ramses_cc")
+            )
+        
+        # Add device_to field 
+        if default_device_to:
+            schema_fields[vol.Optional("device_to", default=default_device_to)] = selector.DeviceSelector(
+                selector.DeviceSelectorConfig(integration="ramses_cc")
+            )
+        else:
+            schema_fields[vol.Optional("device_to")] = selector.DeviceSelector(
+                selector.DeviceSelectorConfig(integration="ramses_cc")
+            )
+        
+        # Add other fields
+        schema_fields[vol.Required("sensor_id", default=default_sensor_id)] = vol.Coerce(int)
+        schema_fields[vol.Required("min_fan_rate", default=current_config.get("min_fan_rate", 0))] = vol.Coerce(int)  
+        schema_fields[vol.Required("max_fan_rate", default=current_config.get("max_fan_rate", 255))] = vol.Coerce(int)
+        schema_fields[vol.Optional("back", default=False)] = selector.BooleanSelector()
+        
+        return vol.Schema(schema_fields, extra=vol.ALLOW_EXTRA)
+    except Exception as e:
+        _LOGGER.error(f"Error creating zone config schema: {e}")
+        # Fallback schema without device selectors 
+        return vol.Schema({
+            vol.Optional("device_from", default=""): cv.string,
+            vol.Optional("device_to", default=""): cv.string,
+            vol.Required("sensor_id", default=default_sensor_id): vol.Coerce(int),
+            vol.Required("min_fan_rate", default=current_config.get("min_fan_rate", 0)): vol.Coerce(int),
+            vol.Required("max_fan_rate", default=current_config.get("max_fan_rate", 255)): vol.Coerce(int),
+            vol.Optional("back", default=False): selector.BooleanSelector(),
+        }, extra=vol.ALLOW_EXTRA)
 
 
 def get_pid_parameters_schema():
@@ -550,10 +580,6 @@ async def validate_device_selection_input(hass: HomeAssistant, data: dict[str, A
     if not data.get("remote_device"):
         raise InvalidEntity("Remote device must be selected")
     
-    # Validate fan_device is provided
-    if not data.get("fan_device"):
-        raise InvalidEntity("Fan device must be selected")
-    
     # Validate num_zones - use default if not provided
     num_zones = data.get("num_zones", 1)
     try:
@@ -633,25 +659,27 @@ async def validate_sensor_types_input(hass: HomeAssistant, data: dict[str, Any])
 
 
 async def validate_zone_config_input(hass: HomeAssistant, data: dict[str, Any], zone_number: int) -> dict[str, Any]:
-    """Validate the zone configuration input."""
+    """Validate the zone configuration input and extract device serials."""
     
-    # Validate ID_from format (should be device ID like "29:162275")
-    id_from = data.get("id_from", "").strip()
+    # Validate device_from selection
+    device_from_id = data.get("device_from")
+    if not device_from_id or device_from_id == "":
+        raise InvalidZoneConfig(f"Zone {zone_number} 'From' device is required")
+    
+    # Extract serial number from device_from
+    id_from = await get_device_serial_number(hass, device_from_id)
     if not id_from:
-        raise InvalidZoneConfig(f"Zone {zone_number} ID_from is required")
+        raise InvalidZoneConfig(f"Zone {zone_number} 'From' device serial number could not be extracted")
     
-    # Basic format validation for ID_from
-    if ":" not in id_from or len(id_from.split(":")) != 2:
-        raise InvalidZoneConfig(f"Zone {zone_number} ID_from must be in format 'XX:XXXXXX' (e.g., '29:162275')")
+    # Validate device_to selection
+    device_to_id = data.get("device_to")
+    if not device_to_id or device_to_id == "":
+        raise InvalidZoneConfig(f"Zone {zone_number} 'To' device is required")
     
-    # Validate ID_to format (should be device ID like "32:146231")
-    id_to = data.get("id_to", "").strip()
+    # Extract serial number from device_to
+    id_to = await get_device_serial_number(hass, device_to_id)
     if not id_to:
-        raise InvalidZoneConfig(f"Zone {zone_number} ID_to is required")
-    
-    # Basic format validation for ID_to
-    if ":" not in id_to or len(id_to.split(":")) != 2:
-        raise InvalidZoneConfig(f"Zone {zone_number} ID_to must be in format 'XX:XXXXXX' (e.g., '32:146231')")
+        raise InvalidZoneConfig(f"Zone {zone_number} 'To' device serial number could not be extracted")
     
     # Validate sensor ID
     sensor_id = data.get("sensor_id", 255)
@@ -953,15 +981,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if isinstance(self._num_zones, str):
                     self._num_zones = int(self._num_zones)
                 
-                # Extract device serial numbers for prefilling zone configs
+                # Extract remote device serial number for prefilling zone configs
                 remote_serial = await get_device_serial_number(self.hass, user_input["remote_device"])
-                fan_serial = await get_device_serial_number(self.hass, user_input["fan_device"])
                 
-                # Store serial numbers for later use in zone configurations
+                # Store serial number for later use in zone configurations
                 self._data["remote_serial"] = remote_serial or ""
-                self._data["fan_serial"] = fan_serial or ""
                 
-                _LOGGER.info(f"Device selection: {self._num_zones} zones, Remote: {remote_serial}, Fan: {fan_serial}")
+                _LOGGER.info(f"Device selection: {self._num_zones} zones, Remote: {remote_serial}")
                 
                 # Initialize zone configurations
                 if "zone_configs" not in self._data:
@@ -975,8 +1001,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 error_msg = str(err).lower()
                 if "remote" in error_msg:
                     errors["remote_device"] = str(err)
-                elif "fan" in error_msg:
-                    errors["fan_device"] = str(err)
                 else:
                     errors["base"] = str(err)
                 _LOGGER.warning(f"Invalid entity: {err}")
@@ -1027,26 +1051,37 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle zone configuration step for any zone number."""
         errors: dict[str, str] = {}
         
+        # First, handle the case where we might have form validation errors but back button was pressed
         if user_input is not None:
-            # Check for back button
-            if user_input.get("back"):
+            # Check if back button was pressed - this should override any validation errors
+            back_pressed = user_input.get("back", False)
+            if back_pressed is True or str(back_pressed).lower() == "true":
                 if zone_number == 1:
                     return await self.async_step_user()
                 else:
                     # Go back to previous zone configuration
                     prev_zone = zone_number - 1
                     return await getattr(self, f"async_step_zone_config_{prev_zone}")()
-                    
+            
             try:
-                # Validate the zone configuration input
+                # Validate the zone configuration input (back button already handled above)
+                _LOGGER.info(f"Validating zone {zone_number} config input: {user_input}")
                 info = await validate_zone_config_input(self.hass, user_input, zone_number)
+                
+                # Extract device serials for storage
+                device_from_id = user_input.get("device_from")
+                device_to_id = user_input.get("device_to")
+                id_from = await get_device_serial_number(self.hass, device_from_id)
+                id_to = await get_device_serial_number(self.hass, device_to_id)
                 
                 # Store zone configuration data
                 if "zone_configs" not in self._data:
                     self._data["zone_configs"] = {}
                 self._data["zone_configs"][zone_number] = {
-                    "id_from": user_input["id_from"],
-                    "id_to": user_input["id_to"],
+                    "device_from": device_from_id,  # Store device ID for config flow
+                    "device_to": device_to_id,      # Store device ID for config flow
+                    "id_from": id_from,             # Store serial for commands
+                    "id_to": id_to,                 # Store serial for commands
                     "sensor_id": user_input["sensor_id"],
                     "min_fan_rate": user_input["min_fan_rate"],
                     "max_fan_rate": user_input["max_fan_rate"],
@@ -1064,10 +1099,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except InvalidZoneConfig as err:
                 # Provide specific error messages based on validation
                 error_msg = str(err).lower()
-                if "id_from" in error_msg:
-                    errors["id_from"] = str(err)
-                elif "id_to" in error_msg:
-                    errors["id_to"] = str(err)
+                if "'from' device" in error_msg:
+                    errors["device_from"] = str(err)
+                elif "'to' device" in error_msg:
+                    errors["device_to"] = str(err)
                 elif "min_fan" in error_msg:
                     errors["min_fan_rate"] = str(err)
                 elif "max_fan" in error_msg:
@@ -1076,17 +1111,25 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = str(err)
                 _LOGGER.warning(f"Invalid zone config: {err}")
             except Exception as err:  # pylint: disable=broad-except
+                # Check if this was a back button request that failed
+                if user_input and user_input.get("back", False):
+                    # Force navigation back regardless of validation errors
+                    if zone_number == 1:
+                        return await self.async_step_user()
+                    else:
+                        prev_zone = zone_number - 1
+                        return await getattr(self, f"async_step_zone_config_{prev_zone}")()
+                
                 errors["base"] = "unknown"
                 _LOGGER.error(f"Unexpected error in zone config step: {err}", exc_info=True)
 
         # Show the zone configuration form
         current_config = self._data.get("zone_configs", {}).get(zone_number, {})
-        remote_serial = self._data.get("remote_serial", "")
-        fan_serial = self._data.get("fan_serial", "")
+        remote_device_id = self._data.get("remote_device")
         
         return self.async_show_form(
             step_id=f"zone_config_{zone_number}",
-            data_schema=get_zone_config_schema(zone_number, current_config, remote_serial, fan_serial),
+            data_schema=get_zone_config_schema(zone_number, current_config, remote_device_id),
             errors=errors,
         )
 
@@ -2006,7 +2049,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         # Build dynamic menu based on number of zones
         num_zones = self._data.get("num_zones", 1)
         menu_options = [
-            "device_selection",
+            "device_configuration",
         ]
         
         # Add zone configuration options
@@ -2046,9 +2089,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             vol.Required("remote_device", default=cur.get("remote_device")): selector.DeviceSelector(
                 selector.DeviceSelectorConfig(integration="ramses_cc")
             ),
-            vol.Optional("fan_device", default=cur.get("fan_device")): selector.DeviceSelector(
-                selector.DeviceSelectorConfig(integration="ramses_cc")
-            ),
         }, extra=vol.ALLOW_EXTRA)
 
     async def async_step_fan_settings(self, user_input: dict[str, Any] | None = None) -> FlowResult:
@@ -2086,10 +2126,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     validated_data["remote_device"] = user_input["remote_device"]
                 except InvalidEntity as e:
                     errors["remote_device"] = str(e)
-                
-                # Add fan_device if provided
-                if user_input.get("fan_device"):
-                    validated_data["fan_device"] = user_input["fan_device"]
                 
                 # If no validation errors, create the entry
                 if not errors:
@@ -2850,9 +2886,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         
         return self.async_create_entry(title="", data={**self.config_entry.options, **sensor_data})
 
-    # Device selection options --------------------------------------------------
-    async def async_step_device_selection(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Handle device selection in options flow."""
+    # Device configuration options --------------------------------------------------
+    async def async_step_device_configuration(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle device configuration in options flow."""
         errors: dict[str, str] = {}
         
         if user_input is not None:
@@ -2863,18 +2899,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 # Store device selection data
                 updated_data = {}
                 updated_data["remote_device"] = user_input["remote_device"]
-                updated_data["fan_device"] = user_input["fan_device"]
                 
                 # Handle num_zones changes
                 new_num_zones = int(user_input.get("num_zones", 1))
                 old_num_zones = self._data.get("num_zones", 1)
                 updated_data["num_zones"] = new_num_zones
                 
-                # Extract device serial numbers for prefilling zone configs
+                # Extract remote device serial number for prefilling zone configs
                 remote_serial = await get_device_serial_number(self.hass, user_input["remote_device"])
-                fan_serial = await get_device_serial_number(self.hass, user_input["fan_device"])
                 updated_data["remote_serial"] = remote_serial or ""
-                updated_data["fan_serial"] = fan_serial or ""
                 
                 # Handle zone_configs changes when num_zones changes
                 current_zone_configs = self._data.get("zone_configs", {})
@@ -2887,16 +2920,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     for zone_num in range(1, min(new_num_zones, old_num_zones) + 1):
                         if zone_num in current_zone_configs:
                             new_zone_configs[zone_num] = current_zone_configs[zone_num].copy()
-                            # Update device serials in existing configs
+                            # Update remote device serial in existing configs
                             new_zone_configs[zone_num]["id_from"] = remote_serial or new_zone_configs[zone_num].get("id_from", "")
-                            new_zone_configs[zone_num]["id_to"] = fan_serial or new_zone_configs[zone_num].get("id_to", "")
                     
                     # Add new zone configs if zones increased
                     if new_num_zones > old_num_zones:
                         for zone_num in range(old_num_zones + 1, new_num_zones + 1):
                             new_zone_configs[zone_num] = {
                                 "id_from": remote_serial or "",
-                                "id_to": fan_serial or "",
+                                "id_to": "",  # Must be configured manually in zone config
                                 "sensor_id": 256 - zone_num,  # Default sensor IDs: 255, 254, 253, etc.
                                 "min_fan_rate": 0,
                                 "max_fan_rate": 255,
@@ -2904,12 +2936,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     
                     updated_data["zone_configs"] = new_zone_configs
                 else:
-                    # Same number of zones, just update device serials
+                    # Same number of zones, just update remote device serial
                     updated_zone_configs = {}
                     for zone_num, zone_config in current_zone_configs.items():
                         updated_zone_configs[zone_num] = zone_config.copy()
                         updated_zone_configs[zone_num]["id_from"] = remote_serial or zone_config.get("id_from", "")
-                        updated_zone_configs[zone_num]["id_to"] = fan_serial or zone_config.get("id_to", "")
+                        # Keep existing id_to unchanged
                     updated_data["zone_configs"] = updated_zone_configs
                 
                 # Create the entry with updated data
@@ -2920,8 +2952,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 error_msg = str(err).lower()
                 if "remote" in error_msg:
                     errors["remote_device"] = str(err)
-                elif "fan" in error_msg:
-                    errors["fan_device"] = str(err)
                 else:
                     errors["base"] = str(err)
                 _LOGGER.warning(f"Invalid entity: {err}")
@@ -2929,9 +2959,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 errors["base"] = "unknown"
                 _LOGGER.error(f"Unexpected error in device selection options: {err}", exc_info=True)
 
-        # Show the device selection form with current values as defaults
+        # Show the device configuration form with current values as defaults
         return self.async_show_form(
-            step_id="device_selection",
+            step_id="device_configuration",
             data_schema=self._schema_device_selection(),
             errors=errors,
         )
@@ -2941,9 +2971,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         cur = self._data
         return vol.Schema({
             vol.Required("remote_device", default=cur.get("remote_device")): selector.DeviceSelector(
-                selector.DeviceSelectorConfig(integration="ramses_cc")
-            ),
-            vol.Required("fan_device", default=cur.get("fan_device")): selector.DeviceSelector(
                 selector.DeviceSelectorConfig(integration="ramses_cc")
             ),
             vol.Optional("num_zones", default=str(cur.get("num_zones", 1))): selector.SelectSelector(
@@ -2992,11 +3019,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 # Validate the zone configuration input
                 info = await validate_zone_config_input(self.hass, user_input, zone_number)
                 
+                # Extract device serials for storage
+                device_from_id = user_input["device_from"]
+                device_to_id = user_input["device_to"]
+                id_from = await get_device_serial_number(self.hass, device_from_id)
+                id_to = await get_device_serial_number(self.hass, device_to_id)
+                
                 # Update zone configuration data
                 current_zone_configs = self._data.get("zone_configs", {})
                 current_zone_configs[zone_number] = {
-                    "id_from": user_input["id_from"],
-                    "id_to": user_input["id_to"],
+                    "device_from": device_from_id,  # Store device ID for config flow
+                    "device_to": device_to_id,      # Store device ID for config flow
+                    "id_from": id_from,             # Store serial for commands
+                    "id_to": id_to,                 # Store serial for commands
                     "sensor_id": user_input["sensor_id"],
                     "min_fan_rate": user_input["min_fan_rate"],
                     "max_fan_rate": user_input["max_fan_rate"],
@@ -3008,10 +3043,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             except InvalidZoneConfig as err:
                 # Provide specific error messages based on validation
                 error_msg = str(err).lower()
-                if "id_from" in error_msg:
-                    errors["id_from"] = str(err)
-                elif "id_to" in error_msg:
-                    errors["id_to"] = str(err)
+                if "'from' device" in error_msg:
+                    errors["device_from"] = str(err)
+                elif "'to' device" in error_msg:
+                    errors["device_to"] = str(err)
                 elif "sensor_id" in error_msg:
                     errors["sensor_id"] = str(err)
                 elif "min_fan" in error_msg:
@@ -3036,19 +3071,22 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Generate schema for zone configuration options with current values as defaults."""
         cur = self._data
         current_zone_config = cur.get("zone_configs", {}).get(zone_number, {})
-        remote_serial = cur.get("remote_serial", "")
-        fan_serial = cur.get("fan_serial", "")
+        remote_device_id = cur.get("remote_device")
         
-        # Use prefilled device serials if available, otherwise use current config or empty string
-        default_id_from = current_zone_config.get("id_from", remote_serial)
-        default_id_to = current_zone_config.get("id_to", fan_serial)
+        # Use device IDs if available, otherwise fall back to remote device for device_from
+        default_device_from = current_zone_config.get("device_from", remote_device_id)
+        default_device_to = current_zone_config.get("device_to", None)
         
         # Calculate default sensor ID: 255 for zone 1, 254 for zone 2, etc.
         default_sensor_id = current_zone_config.get("sensor_id", 256 - zone_number)
         
         return vol.Schema({
-            vol.Required("id_from", default=default_id_from): cv.string,
-            vol.Required("id_to", default=default_id_to): cv.string,
+            vol.Required("device_from", default=default_device_from): selector.DeviceSelector(
+                selector.DeviceSelectorConfig(integration="ramses_cc")
+            ),
+            vol.Required("device_to", default=default_device_to): selector.DeviceSelector(
+                selector.DeviceSelectorConfig(integration="ramses_cc")
+            ),
             vol.Required("sensor_id", default=default_sensor_id): vol.Coerce(int),
             vol.Required("min_fan_rate", default=current_zone_config.get("min_fan_rate", 0)): vol.Coerce(int),
             vol.Required("max_fan_rate", default=current_zone_config.get("max_fan_rate", 255)): vol.Coerce(int),

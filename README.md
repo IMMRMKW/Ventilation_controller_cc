@@ -4,14 +4,8 @@ A custom Home Assistant component that automatically controls your Ramses RF ven
 
 ## How to Use
 
-### Step 1: Configure Ramses CC Commands
-Add the integration commands to your Ramses CC schema:
-
-1. Open the `commands.txt` file in a text editor like Notepad++
-2. Replace the serial numbers in the commands with your actual device serial numbers:
-   - Use Ctrl+F to find the existing serial numbers
-   - Replace them with your remote and ventilation unit serial numbers
-3. Copy all commands and paste them into the "commands" section of your remote in Ramses CC's "known devices" section
+### Step 1: Configure Ramses CC
+Add the number of faked CO2 devices to your Ramses CC's "known devices" section equal to the number of zones in your ventilation system. Use device IDs that are logical. E.g., check your actual CO2 sensor's ID, and increment the last number for each zone.
 
 <img src="images/schema.png" alt="Ramses CC Schema Configuration" width="50%">
 
@@ -41,11 +35,22 @@ Add the integration commands to your Ramses CC schema:
 2. Search for "PID Ventilation Control" and select it
 3. Follow the configuration steps:
 
-#### Fan Settings
+#### Remote selection and zone number
 
-Set the minimum and maximum fan output values. Use a lower maximum value if full power (255) is too loud.
+In the dropdown menus, select your remote controller and the number of zones your system uses. If you do not have a zone controller and have one ventilation unit, set zones to 1.
 
-<img src="images/fan_settings.png" alt="Fan settings" width="50%">
+<img src="images\device_configuration.png" alt="Fan settings" width="50%">
+
+#### Zone Configuration
+
+For each zone in your system, you'll configure the device communication and fan control settings:
+
+- **From Device (Source)**: Select the (one of the) face CO2 sensor(s) that your previously made in your known devices list. Each fake sensor will act as if present in one of the zones.
+- **To Device (Target)**: Select the fan controller or valve device for this specific zone
+- **Sensor ID**: Identifier used in messages (defaults to 255 for zone 1, 254 for zone 2, etc.). This variable modifies the ramses rf message. Leave as is.
+- **Min/Max Fan Rate**: Control the fan speed range for this zone (0-255)
+
+<img src="images/zone_device_configuration.png" alt="Zone device configuration" width="50%">
 
 #### Sensor Types
 
@@ -58,6 +63,12 @@ Select which types of air quality sensors you want to use. Toggle "back" and sub
 Choose the specific sensor entities for each selected sensor type.
 
 <img src="images/co2_sensors.png" alt="CO2 sensor selection" width="50%">
+
+#### Sensor Zone Assignment
+
+If you have multiple zones, assign each sensor to the zone it monitors. This allows the controller to adjust fan speeds independently for each zone based on local air quality conditions.
+
+<img src="images/zone_assignment.png" alt="Sensor zone assignment" width="50%">
 
 #### Air Quality Index Configuration
 
@@ -85,3 +96,16 @@ Configure the control algorithm parameters:
 Note: Many ventilation systems only adjust every 10 minutes, so very short intervals may not improve responsiveness.
 
 <img src="images/pid_parameters.png" alt="PID controller parameters" width="50%">
+
+### Step 4: Setup Complete
+
+After completing all configuration steps, your ventilation controller is ready! The integration will:
+
+1. **Monitor** your selected air quality sensors continuously
+2. **Calculate** an overall air quality index (0-5) for each zone
+3. **Control** fan speeds automatically using the PID algorithm
+4. **Adjust** each zone independently based on local sensor readings
+
+You can monitor and adjust the system through:
+- **Settings** → **Devices & Services** → **PID Ventilation Control** (to reconfigure)
+- **Developer Tools** → **States** (to see current sensor values and fan outputs)

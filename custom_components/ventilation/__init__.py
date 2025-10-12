@@ -34,7 +34,6 @@ from .const import (
     CONF_KI_TIMES,
     CONF_UPDATE_INTERVAL,
     CONF_REMOTE_DEVICE,
-    CONF_FAN_DEVICE,
     CONF_VALVE_DEVICES,
     CONF_NUM_ZONES,
     CONF_ZONE_CONFIGS,
@@ -479,55 +478,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Get zone configurations and determine number of zones
     zone_configs = cfg.get(CONF_ZONE_CONFIGS, {})
     
-    # Backward compatibility: if no zone configs but has old fan settings, create default zone config
-    if not zone_configs:
-        min_fan_output = cfg.get(CONF_MIN_FAN_OUTPUT, 0)
-        max_fan_output = cfg.get(CONF_MAX_FAN_OUTPUT, 255)
-        remote_device_id = cfg.get(CONF_REMOTE_DEVICE)
-        fan_device_id = cfg.get(CONF_FAN_DEVICE)
-        
-        # Try to extract serial numbers from devices for backward compatibility
-        remote_serial = None
-        fan_serial = None
-        
-        if remote_device_id:
-            try:
-                device_registry = dr.async_get(hass)
-                remote_device = device_registry.async_get(remote_device_id)
-                if remote_device:
-                    for domain, identifier in remote_device.identifiers:
-                        if isinstance(identifier, str) and len(identifier) > 6:
-                            remote_serial = identifier
-                            break
-            except Exception:
-                pass
-        
-        if fan_device_id:
-            try:
-                device_registry = dr.async_get(hass)
-                fan_device = device_registry.async_get(fan_device_id)
-                if fan_device:
-                    for domain, identifier in fan_device.identifiers:
-                        if isinstance(identifier, str) and len(identifier) > 6:
-                            fan_serial = identifier
-                            break
-            except Exception:
-                pass
-        
-        # Create default zone config if we have the necessary data
-        if remote_serial and fan_serial:
-            zone_configs = {
-                1: {
-                    CONF_ZONE_ID_FROM: remote_serial,
-                    CONF_ZONE_ID_TO: fan_serial,
-                    CONF_ZONE_SENSOR_ID: 255,  # Default sensor ID for zone 1
-                    CONF_ZONE_MIN_FAN: min_fan_output,
-                    CONF_ZONE_MAX_FAN: max_fan_output,
-                }
-            }
-            _LOGGER.info(f"Created backward compatibility zone config: {zone_configs[1]}")
+    # Process zone configs to ensure device serials are available
+    # New configs store both device IDs and serials, old configs may only have serials
+    processed_zone_configs = {}
+    device_registry = dr.async_get(hass)
     
-    num_zones = len(zone_configs) if zone_configs else 1
+    for zone_id, zone_config in zone_configs.items():
+        processed_config = zone_config.copy()
+        
+        # Check if we have device IDs that need serial extraction
+        device_from = zone_config.get("device_from")
+        device_to = zone_config.get("device_to")
+        
+        if device_from and not zone_config.get(CONF_ZONE_ID_FROM):
+            # Extract serial from device_from if not already available
+            try:
+                device = device_registry.async_get(device_from)
+                if device:
+                    for domain, identifier in device.identifiers:
+                        if isinstance(identifier, str) and len(identifier) > 6:
+                            processed_config[CONF_ZONE_ID_FROM] = identifier
+                            break
+            except Exception as e:
+                _LOGGER.warning(f"Failed to extract serial from device_from {device_from} for zone {zone_id}: {e}")
+        
+        if device_to and not zone_config.get(CONF_ZONE_ID_TO):
+            # Extract serial from device_to if not already available
+            try:
+                device = device_registry.async_get(device_to)
+                if device:
+                    for domain, identifier in device.identifiers:
+                        if isinstance(identifier, str) and len(identifier) > 6:
+                            processed_config[CONF_ZONE_ID_TO] = identifier
+                            break
+            except Exception as e:
+                _LOGGER.warning(f"Failed to extract serial from device_to {device_to} for zone {zone_id}: {e}")
+        
+        processed_zone_configs[zone_id] = processed_config
+    
+    zone_configs = processed_zone_configs
+    
+    # Note: Zone configurations must now be set up through the config flow
+    # Legacy single fan device setup is no longer supported
+    
+    # Try zone_configs first, then num_zones config, then fallback to 1
+    num_zones = len(zone_configs) if zone_configs else int(cfg.get(CONF_NUM_ZONES, 1))
     
     # Get valve devices for backward compatibility
     valve_devices = cfg.get(CONF_VALVE_DEVICES, [])
@@ -537,7 +532,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ki_times = cfg[CONF_KI_TIMES]
     update_interval = cfg[CONF_UPDATE_INTERVAL]
     remote_device_id = cfg[CONF_REMOTE_DEVICE]
-    fan_device_id = cfg.get(CONF_FAN_DEVICE)
     
     # Get remote device and extract entity_id and serial number
     remote_entity_id = None
@@ -569,25 +563,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as e:
             _LOGGER.error(f"Error accessing remote device {remote_device_id}: {e}", exc_info=True)
             return False
-    
-    # Get fan device and extract serial number if device is selected
-    fan_serial_number = None
-    if fan_device_id:
-        try:
-            device_registry = dr.async_get(hass)
-            fan_device = device_registry.async_get(fan_device_id)
-            if fan_device:
-                # Extract serial number from device identifiers
-                for domain, identifier in fan_device.identifiers:
-                    if isinstance(identifier, str) and len(identifier) > 6:
-                        # Assume the identifier is or contains the serial number
-                        fan_serial_number = identifier
-                        break
-                _LOGGER.info(f"Fan device found: {fan_device.name}, Serial: {fan_serial_number}")
-            else:
-                _LOGGER.warning(f"Fan device with ID {fan_device_id} not found")
-        except Exception as e:
-            _LOGGER.error(f"Error accessing fan device {fan_device_id}: {e}", exc_info=True)
     
     # Indices (use defaults if not provided)
     co2_index = cfg.get(CONF_CO2_INDEX, DEFAULT_CO2_INDEX)
