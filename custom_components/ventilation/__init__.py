@@ -356,7 +356,7 @@ async def send_zone_commands_with_delay(hass: HomeAssistant, zone_configs: dict,
             
         id_from = zone_config.get(CONF_ZONE_ID_FROM)
         id_to = zone_config.get(CONF_ZONE_ID_TO)
-        sensor_id = zone_config.get(CONF_ZONE_SENSOR_ID, 256 - zone_id)  # Default to 255 for zone 1, 254 for zone 2, etc.
+        sensor_id = zone_config.get(CONF_ZONE_SENSOR_ID, 256 - int(zone_id))  # Default to 255 for zone 1, 254 for zone 2, etc.
         
         if not id_from or not id_to:
             _LOGGER.warning(f"Zone {zone_id} missing ID configuration, skipping command")
@@ -762,9 +762,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Reset time baseline to avoid integral spike when re-enabled
             entry_data["last_execution_time"] = datetime.now()
             
-            # Set all zones to zero rate
+            # Set all zones to zero rate - ensure consistent zone coverage
             if zone_configs:
                 for zone_id in zone_configs.keys():
+                    zone_rates[zone_id] = 0
+            else:
+                # Fallback to ensure at least zone 1 exists for sensors
+                for zone_id in range(1, num_zones + 1):
                     zone_rates[zone_id] = 0
             
             # Update rate sensors with zero values but skip PID calculations and commands
