@@ -5,7 +5,7 @@ A custom Home Assistant component that automatically controls your Ramses RF ven
 ## How to Use
 
 ### Step 1: Configure Ramses CC
-Add the number of faked CO2 devices to your Ramses CC's "known devices" section equal to the number of zones in your ventilation system. Use device IDs that are logical. E.g., check your actual CO2 sensor's ID, and increment the last number for each zone. In the example below you see how I have one actual sensor, and two fake ones where I simply incremented the last digit.
+Add the number of faked CO2 devices to your Ramses CC's "known devices" section equal to the number of zones in your ventilation system. Use device IDs that are logical. E.g., check your actual CO2 sensor's ID, and increment the last number for each zone. In the example below you see how I have one actual sensor, and two fake ones where I simply incremented the last digit. These sensors will later be used to send fan commands based on the current air quality.
 
 ```yaml
 "29:181232":
