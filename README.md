@@ -2,6 +2,19 @@
 
 A custom Home Assistant component that automatically controls your Ramses RF ventilation unit based on real-time air quality measurements. The controller uses air quality sensors to calculate an index from 0 (excellent) to 5 (very poor) and adjusts fan speed accordingly.
 
+**Supported Sensor Types:**
+
+- CO2 (Carbon Dioxide)
+- PM (Particulate Matter - PM1.0, PM2.5, PM10)
+- VOC (Volatile Organic Compounds)
+- Humidity
+
+*Need support for other sensor types? Feel free to open an issue on GitHub!*
+
+The controller supports multi-zone systems by mimicking a CO2 sensor for each zone, without interfering with existing sensors already bound to your ventilation box or zone controller. The current version uses fake remote devices to send commands to your ventilation system.
+
+**Prerequisites:** This guide assumes you have already configured Ramses CC integration with a working remote device in Home Assistant.
+
 ## How to Use
 
 ### Step 1: Configure Ramses CC
@@ -54,7 +67,7 @@ In the dropdown menus, select your remote controller and the number of zones you
 
 For each zone in your system, you'll configure the device communication and fan control settings:
 
-- **From Device (Source)**: Select the (one of the) face CO2 sensor(s) that your previously made in your known devices list. Each fake sensor will act as if present in one of the zones.
+- **From Device (Source)**: Select one of the fake CO2 sensor(s) that you previously created in your known devices list. Each fake sensor will act as if present in one of the zones.
 - **To Device (Target)**: Select the fan controller or valve device for this specific zone
 - **Sensor ID**: Identifier used in messages (defaults to 255 for zone 1, 254 for zone 2, etc.). This variable modifies the ramses rf message. Leave as is.
 - **Min/Max Fan Rate**: Control the fan speed range for this zone (0-255)
@@ -98,7 +111,7 @@ The default values are based on health guidelines and should work well for most 
 Configure the control algorithm parameters:
 
 - **Setpoint**: Target air quality index (recommend starting with 1.0)
-- **Proportional Gain (Kp)**: How the fan power is linearly increase with increasing deviation of the air quality compared to your setpoint
+- **Proportional Gain (Kp)**: How the fan power linearly increases with increasing deviation of the air quality compared to your setpoint
 - **Integral Gain (Ki)**: Six values controlling response time for each air quality level (represents approximate time to reach 100% fan speed). You can use the six numbers so the controller responds differently when the air quality is already quite good (index = 0) compared to when the air quality is poor (index = 5)
 - **Update Interval**: How often to check sensors and adjust the fan (in seconds)
 
@@ -106,7 +119,21 @@ Note: Many ventilation systems only adjust every 10 minutes, so very short inter
 
 <img src="images/pid_parameters.png" alt="PID controller parameters" width="50%">
 
-### Step 4: Setup Complete
+### Step 4: Bind Sensors
+
+Before the system will work, your ventilation box or zone controller must accept commands from the fake sensors you defined in Step 1. This requires a one-time binding process:
+
+1. **Enable Pairing Mode**: Ensure your ventilation unit or zone controller is in pairing mode. Many systems automatically enter pairing mode for the first few minutes after startup, so a simple power cycle is usually sufficient.
+
+2. **Execute Binding Functions**: In Home Assistant, navigate to **Developer Tools** → **Actions**. In the search bar, type "bind" and you'll find one binding function for each zone you configured (as shown in the image below).
+
+3. **Perform Binding**: Execute each binding function once by selecting it and clicking **Perform Action**. Do this for all configured zones.
+
+4. **Verify Success**: After binding, your system should accept messages from the fake sensors. You can confirm successful binding by checking the Ramses CC log file for message exchanges during the binding process.
+
+<img src="images/bind_functions.png" alt="Binding functions in Developer Tools" width="50%">
+
+### Step 5: Setup Complete
 
 After completing all configuration steps, your ventilation controller is ready! The integration will:
 

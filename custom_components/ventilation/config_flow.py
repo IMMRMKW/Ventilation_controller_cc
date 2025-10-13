@@ -171,7 +171,7 @@ def get_zone_config_schema(zone_number: int, current_config: dict = None, remote
 def get_pid_parameters_schema():
     """Generate schema for PID parameters (including Ki times)."""
     return vol.Schema({
-        vol.Required("setpoint", default=0.5): vol.Coerce(float),
+        vol.Required("setpoint", default=1.2): vol.Coerce(float),
         vol.Required("kp", default=25.5): vol.Coerce(float),
         vol.Required("ki_times", default="3600,1800,900,450,225,150"): cv.string,
         vol.Required("update_interval", default=300): vol.Coerce(int),
