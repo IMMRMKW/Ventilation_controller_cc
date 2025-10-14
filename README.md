@@ -110,7 +110,7 @@ The default values are based on health guidelines and should work well for most 
 
 Configure the control algorithm parameters:
 
-- **Setpoint**: Target air quality index (recommend starting with 1.0)
+- **Setpoint**: Target air quality index (1.2 is a good starting point for CO2)
 - **Proportional Gain (Kp)**: How the fan power linearly increases with increasing deviation of the air quality compared to your setpoint
 - **Integral Gain (Ki)**: Six values controlling response time for each air quality level (represents approximate time to reach 100% fan speed). You can use the six numbers so the controller responds differently when the air quality is already quite good (index = 0) compared to when the air quality is poor (index = 5)
 - **Update Interval**: How often to check sensors and adjust the fan (in seconds)

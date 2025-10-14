@@ -3037,8 +3037,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     "max_fan_rate": user_input["max_fan_rate"],
                 }
                 
-                # Create the entry with updated zone config
-                return self.async_create_entry(title="", data={**self.config_entry.options, "zone_configs": current_zone_configs})
+                # Preserve all existing options and only update zone_configs
+                updated_options = dict(self.config_entry.options)
+                updated_options["zone_configs"] = current_zone_configs
+                
+                # Create the entry with properly preserved options
+                return self.async_create_entry(title="", data=updated_options)
                 
             except InvalidZoneConfig as err:
                 # Provide specific error messages based on validation

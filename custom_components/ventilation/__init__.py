@@ -770,7 +770,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     zone_max = zone_config.get(CONF_ZONE_MAX_FAN, 255)
                     
                     if not id_from or not id_to:
-                        _LOGGER.warning(f"Zone {zone_id} missing ID configuration, skipping")
+                        _LOGGER.warning(f"Zone {zone_id} missing ID configuration, setting rate to 0")
+                        zone_rates[zone_id] = 0
                         continue
                     
                     # Get zone-specific AQI
@@ -824,18 +825,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         try:
             span = global_max_rate - global_min_rate
             pct = 0.0 if span <= 0 else round((global_rate - global_min_rate) * 100.0 / span, 2)
-            ed = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-            if isinstance(ed, dict):
-                ed["rate_pct"] = pct
-                ed["zone_rates"] = zone_rates  # Store individual zone rates
-                ed["zone_pid_states"] = zone_pid_states  # Store PID states
+            
+            # Ensure hass.data structure exists and update rate data
+            if DOMAIN not in hass.data:
+                hass.data[DOMAIN] = {}
+            if entry.entry_id not in hass.data[DOMAIN]:
+                hass.data[DOMAIN][entry.entry_id] = {}
+                
+            ed = hass.data[DOMAIN][entry.entry_id]
+            ed["rate_pct"] = pct
+            ed["zone_rates"] = zone_rates  # Store individual zone rates
+            ed["zone_pid_states"] = zone_pid_states  # Store PID states
+            
+            # Send sensor update signal
             async_dispatcher_send(
                 hass,
                 f"{SIGNAL_RATE_UPDATED}_{entry.entry_id}",
                 {"rate_pct": pct, "rate": global_rate, "zone_rates": zone_rates},
             )
-        except Exception:
-            pass
+            _LOGGER.debug(f"Updated rate sensor: {pct}% (rate: {global_rate}, zones: {zone_rates})")
+            
+        except Exception as e:
+            _LOGGER.error(f"Error updating rate sensor: {e}", exc_info=True)
+            # Ensure we still try to send a basic update even if percentage calculation fails
+            try:
+                async_dispatcher_send(
+                    hass,
+                    f"{SIGNAL_RATE_UPDATED}_{entry.entry_id}",
+                    {"rate_pct": 0.0, "rate": global_rate, "zone_rates": zone_rates},
+                )
+            except Exception as e2:
+                _LOGGER.error(f"Failed to send fallback rate update: {e2}")
 
         # Log zone AQI and rate information
         zone_aqi_str = ", ".join([f"Zone {zone}: AQI={aqi:.2f}" for zone, aqi in zone_aqi_data.items()])
