@@ -2185,17 +2185,24 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     def _schema_pid(self) -> vol.Schema:
         cur = self._data
         
-        # Try to get the current live value from the setpoint entity
+        # Try to get the current runtime value directly from hass.data
         current_setpoint = cur.get("setpoint", 0.5)  # Default fallback
         try:
-            # Get the live value from the setpoint entity state
-            setpoint_entity_id = f"number.{DOMAIN}_{self.config_entry.entry_id}_setpoint"
-            setpoint_state = self.hass.states.get(setpoint_entity_id)
-            if setpoint_state and setpoint_state.state not in ("unknown", "unavailable"):
-                live_setpoint = float(setpoint_state.state)
-                current_setpoint = live_setpoint
-        except (ValueError, TypeError):
-            # If we can't get the live value, stick with the configured value
+            # Get the live runtime value directly from hass.data (same source as the number entity)
+            domain_data = self.hass.data.get(DOMAIN, {})
+            entry_data = domain_data.get(self.config_entry.entry_id, {})
+            if isinstance(entry_data, dict):
+                runtime_setpoint = entry_data.get("current_setpoint")
+                if runtime_setpoint is not None:
+                    _LOGGER.info(f"Config flow schema: using runtime setpoint {runtime_setpoint} (config was {current_setpoint})")
+                    current_setpoint = runtime_setpoint
+                else:
+                    _LOGGER.info(f"Config flow schema: no runtime setpoint, using config setpoint {current_setpoint}")
+            else:
+                _LOGGER.warning(f"Config flow schema: invalid entry_data type {type(entry_data)}")
+        except Exception as e:
+            _LOGGER.warning(f"Failed to get runtime setpoint, using config value: {e}")
+            # If we can't get the runtime value, stick with the configured value
             pass
         
         return vol.Schema({
@@ -2244,6 +2251,49 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 
                 # If no validation errors, create the entry
                 if not errors:
+                    # Update runtime setpoint to match config to keep them in sync
+                    domain_data = self.hass.data.get(DOMAIN, {})
+                    entry_data = domain_data.get(self.config_entry.entry_id, {})
+                    if isinstance(entry_data, dict) and "setpoint" in validated_data:
+                        old_setpoint = entry_data.get("current_setpoint")
+                        entry_data["current_setpoint"] = validated_data["setpoint"]
+                        _LOGGER.info(f"Config flow updated runtime setpoint: {old_setpoint} → {validated_data['setpoint']}")
+                        
+                        # Schedule an async task to update the number entity after the config is saved
+                        async def update_number_entity():
+                            try:
+                                # Small delay to ensure the config entry is updated first
+                                import asyncio
+                                await asyncio.sleep(0.1)
+                                
+                                # Find the setpoint number entity and schedule a state update
+                                entity_registry = er.async_get(self.hass)
+                                unique_id = f"{self.config_entry.entry_id}_setpoint"
+                                entity_id = entity_registry.async_get_entity_id("number", DOMAIN, unique_id)
+                                
+                                if entity_id:
+                                    # Get the entity object and trigger an update
+                                    state = self.hass.states.get(entity_id)
+                                    if state:
+                                        # Update the state to reflect the new value
+                                        self.hass.states.async_set(
+                                            entity_id, 
+                                            validated_data["setpoint"], 
+                                            state.attributes
+                                        )
+                                        _LOGGER.debug(f"Updated number entity {entity_id} state to {validated_data['setpoint']}")
+                                    else:
+                                        _LOGGER.warning(f"Could not find state for entity {entity_id}")
+                                else:
+                                    _LOGGER.warning(f"Could not find entity with unique_id {unique_id}")
+                            except Exception as e:
+                                _LOGGER.error(f"Error updating number entity: {e}")
+                        
+                        # Schedule the update task
+                        self.hass.async_create_task(update_number_entity())
+                    else:
+                        _LOGGER.warning(f"Could not update runtime setpoint - entry_data: {type(entry_data)}, has setpoint: {'setpoint' in validated_data}")
+                    
                     return self.async_create_entry(title="", data={**self.config_entry.options, **validated_data})
                     
             except Exception as e:

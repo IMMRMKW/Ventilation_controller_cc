@@ -25,6 +25,8 @@ async def async_setup_entry(
 
 class VentilationSetpointNumber(NumberEntity):
     """Representation of the ventilation controller setpoint."""
+    
+    _attr_should_poll = True  # Enable polling to check for changes
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         """Initialize the setpoint number entity."""
@@ -72,16 +74,19 @@ class VentilationSetpointNumber(NumberEntity):
         runtime_setpoint = entry_data.get("current_setpoint")
         
         if runtime_setpoint is not None:
+            if runtime_setpoint != self._value:
+                _LOGGER.debug(f"Number entity native_value: runtime changed {self._value} → {runtime_setpoint}")
             self._value = runtime_setpoint
             return runtime_setpoint
         
+        _LOGGER.debug(f"Number entity native_value: using stored value {self._value}")
         return self._value
 
     async def async_set_native_value(self, value: float) -> None:
         """Update the setpoint value."""
         self._value = value
         
-        _LOGGER.info(f"Setpoint updated to {value}")
+        _LOGGER.info(f"Setpoint updated via slider to {value}")
         
         # Store the updated value in the runtime data so PID controller can use it immediately
         # Do NOT update the config entry as this can cause reload loops
@@ -89,6 +94,18 @@ class VentilationSetpointNumber(NumberEntity):
         entry_data = domain_data.get(self._config_entry.entry_id, {})
         if isinstance(entry_data, dict):
             entry_data["current_setpoint"] = value
+            _LOGGER.debug(f"Stored runtime setpoint: {value}")
         
         # Trigger a state update
         self.async_write_ha_state()
+
+    async def async_update(self) -> None:
+        """Update the entity state."""
+        # Get the most current value from runtime data
+        domain_data = self._hass.data.get(DOMAIN, {})
+        entry_data = domain_data.get(self._config_entry.entry_id, {})
+        runtime_setpoint = entry_data.get("current_setpoint")
+        
+        if runtime_setpoint is not None and runtime_setpoint != self._value:
+            _LOGGER.debug(f"Number entity updating value: {self._value} → {runtime_setpoint}")
+            self._value = runtime_setpoint

@@ -873,6 +873,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
+    
+    # Check if this entry already has data (e.g., from a reload) and preserve runtime setpoint
+    existing_data = hass.data[DOMAIN].get(entry.entry_id, {})
+    existing_runtime_setpoint = existing_data.get("current_setpoint") if isinstance(existing_data, dict) else None
+    
+    # Use existing runtime setpoint if available, otherwise fall back to config setpoint
+    current_setpoint_value = existing_runtime_setpoint if existing_runtime_setpoint is not None else setpoint
+    
+    if existing_runtime_setpoint is not None:
+        _LOGGER.debug(f"Preserving existing runtime setpoint: {existing_runtime_setpoint}")
+    else:
+        _LOGGER.debug(f"Initializing setpoint from config: {setpoint}")
+    
     hass.data[DOMAIN][entry.entry_id] = {
         "enabled": True,
         "remove_listener": remove_listener,
@@ -889,7 +902,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "zone_pid_states": zone_pid_states,  # Store PID states for each zone
         "added_commands": set(),  # Track which rate commands have been added
         "last_execution_time": None,  # Instance-specific last execution time
-        "current_setpoint": setpoint,  # Initialize with config setpoint
+        "current_setpoint": current_setpoint_value,  # Preserve runtime setpoint if available
         "humidity_avg_tracker": humidity_avg_tracker,  # Store humidity moving average tracker
     }
 
