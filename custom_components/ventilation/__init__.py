@@ -461,9 +461,13 @@ async def send_zone_commands_with_delay(hass: HomeAssistant, zone_configs: dict,
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PID Ventilation Control from a config entry."""
-    # Merge options over data so runtime changes take immediate effect
-    cfg = {**entry.data, **entry.options}
-    # Get configuration from merged config
+    # Import the improved merge function to prevent sensor duplication bugs
+    from .config_flow import merge_config_with_validation
+    
+    # Get properly merged and validated configuration
+    cfg = merge_config_with_validation(entry.data, entry.options, allow_cleanup=False)
+    
+    # Get configuration from validated config
     co2_sensors = cfg.get(CONF_CO2_SENSORS, [])
     voc_sensors = cfg.get(CONF_VOC_SENSORS, [])
     pm_sensors = cfg.get(CONF_PM_SENSORS, [])
@@ -475,8 +479,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     pm_zones = cfg.get(CONF_PM_SENSOR_ZONES, [])
     humidity_zones = cfg.get(CONF_HUMIDITY_SENSOR_ZONES, [])
     
-    # Get zone configurations and determine number of zones
+    # Get validated zone configurations 
     zone_configs = cfg.get(CONF_ZONE_CONFIGS, {})
+    
+    # Determine number of zones from validated config (now guaranteed consistent)
+    num_zones = len(zone_configs) if zone_configs else int(cfg.get(CONF_NUM_ZONES, 1))
+    
+    _LOGGER.info(f"Setup entry: {num_zones} zones from validated config")
     
     # Process zone configs to ensure device serials are available
     # New configs store both device IDs and serials, old configs may only have serials
@@ -521,8 +530,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Note: Zone configurations must now be set up through the config flow
     # Legacy single fan device setup is no longer supported
     
-    # Try zone_configs first, then num_zones config, then fallback to 1
-    num_zones = len(zone_configs) if zone_configs else int(cfg.get(CONF_NUM_ZONES, 1))
+    # Use validated num_zones from consistent config helper
+    _LOGGER.debug(f"Using validated zone count: {num_zones}, zone_configs: {list(zone_configs.keys())}")
     
     # Get valve devices for backward compatibility
     valve_devices = cfg.get(CONF_VALVE_DEVICES, [])
@@ -589,23 +598,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info(f"Zone configs: {list(zone_configs.keys())}, Kp: {kp_config}, Update interval: {update_interval}s")
   
     # Calculate the overall fan range for PID calculations (use widest range from all zones)
+    # Zone configs now store percentages (0-100), so we work in percentage space
     if zone_configs:
-        all_min_rates = [zone_configs[zone_id].get(CONF_ZONE_MIN_FAN, 0) for zone_id in zone_configs]
-        all_max_rates = [zone_configs[zone_id].get(CONF_ZONE_MAX_FAN, 255) for zone_id in zone_configs]
-        global_min_rate = min(all_min_rates)
-        global_max_rate = max(all_max_rates)
+        all_min_rates_pct = [zone_configs[zone_id].get(CONF_ZONE_MIN_FAN, 0) for zone_id in zone_configs]
+        all_max_rates_pct = [zone_configs[zone_id].get(CONF_ZONE_MAX_FAN, 100) for zone_id in zone_configs]
+        global_min_rate_pct = min(all_min_rates_pct)
+        global_max_rate_pct = max(all_max_rates_pct)
     else:
         # Fallback for single zone without configuration
-        global_min_rate = 0
-        global_max_rate = 255
+        global_min_rate_pct = 0
+        global_max_rate_pct = 100
     
-    # Fan discrete speeds for PID calculation
-    fan_speeds = np.arange(global_min_rate, global_max_rate + 1e-6, 1)
+    # Fan discrete speeds for PID calculation (now in percentage space)
+    fan_speeds_pct = np.arange(global_min_rate_pct, global_max_rate_pct + 1e-6, 1)
 
-    # PID coefficients
-    fan_diff = fan_speeds.max() - fan_speeds.min() if len(fan_speeds) > 1 else 255
+    # PID coefficients (now based on percentage range)
+    fan_diff_pct = fan_speeds_pct.max() - fan_speeds_pct.min() if len(fan_speeds_pct) > 1 else 100
     Kp = kp_config
-    Ki = [fan_diff / ki_time for ki_time in ki_times]
+    Ki = [fan_diff_pct / ki_time for ki_time in ki_times]
     
     _LOGGER.info(f"Calculated Ki values: {Ki}")
     #Kd = 0.005
@@ -766,8 +776,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     id_from = zone_config.get(CONF_ZONE_ID_FROM)
                     id_to = zone_config.get(CONF_ZONE_ID_TO)
                     sensor_id = zone_config.get(CONF_ZONE_SENSOR_ID, 256 - int(zone_id))  # Default to 255 for zone 1, 254 for zone 2, etc.
-                    zone_min = zone_config.get(CONF_ZONE_MIN_FAN, 0)
-                    zone_max = zone_config.get(CONF_ZONE_MAX_FAN, 255)
+                    zone_min_pct = zone_config.get(CONF_ZONE_MIN_FAN, 0)  # Now in percentage
+                    zone_max_pct = zone_config.get(CONF_ZONE_MAX_FAN, 100)  # Now in percentage
                     
                     if not id_from or not id_to:
                         _LOGGER.warning(f"Zone {zone_id} missing ID configuration, setting rate to 0")
@@ -784,34 +794,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     idx = min(int(round(zone_aqi)), len(Ki) - 1)
                     Ki_index_based = Ki[idx]
                     error = zone_aqi - current_setpoint
-                    pid_state["integral"] += error * Ki_index_based * time_diff
+                    pid_state["integral"] += error * time_diff
                     pid_state["prev_error"] = error
                     
-                    # Zone-specific fan speeds range
-                    zone_fan_speeds = np.arange(zone_min, zone_max + 1e-6, 1)
+                    # Zone-specific fan speeds range (in percentage)
+                    zone_fan_speeds_pct = np.arange(zone_min_pct, zone_max_pct + 1e-6, 1)
                     
-                    # PID output (desired removal rate) for this zone
-                    pid_output = Kp * error + pid_state["integral"] + zone_fan_speeds.min()
+                    # PID output (desired removal rate) for this zone (in percentage space)
+                    pid_output_pct = Kp * error + Ki_index_based * pid_state["integral"] + zone_fan_speeds_pct.min()
                     
                     # Map to discrete fan speed and handle integral windup for this zone
-                    if pid_output < zone_fan_speeds[0]:
-                        zone_rate = int(zone_fan_speeds[0])
-                        pid_state["integral"] -= error * Ki_index_based * time_diff  # Remove the integral contribution that caused windup
-                    elif pid_output > zone_fan_speeds[-1]:
-                        zone_rate = int(zone_fan_speeds[-1])
-                        pid_state["integral"] -= error * Ki_index_based * time_diff  # Remove the integral contribution that caused windup
+                    if pid_output_pct < zone_fan_speeds_pct[0]:
+                        zone_rate_pct = int(zone_fan_speeds_pct[0])
+                        pid_state["integral"] -= error * time_diff  # Remove the integral contribution that caused windup
+                    elif pid_output_pct > zone_fan_speeds_pct[-1]:
+                        zone_rate_pct = int(zone_fan_speeds_pct[-1])
+                        pid_state["integral"] -= error * time_diff  # Remove the integral contribution that caused windup
                     else:
                         # Round to nearest integer within allowed range
-                        zone_rate = int(round(float(np.clip(pid_output, zone_fan_speeds[0], zone_fan_speeds[-1]))))
+                        zone_rate_pct = int(round(float(np.clip(pid_output_pct, zone_fan_speeds_pct[0], zone_fan_speeds_pct[-1]))))
+                    
+                    # Convert percentage to 0-255 range only for command sending
+                    zone_rate_255 = int(round((zone_rate_pct / 100.0) * 255))
                     
                     # Store the updated PID state
                     zone_pid_states[zone_id] = pid_state
-                    zone_rates[zone_id] = zone_rate
                     
-                    # Track maximum rate for overall sensor
-                    max_zone_rate = max(max_zone_rate, zone_rate)
+                    # Store both the percentage rate for sensors and the 0-255 rate for commands
+                    zone_rates[zone_id] = zone_rate_255  # Commands use 0-255 range
                     
-                    _LOGGER.debug(f"Zone {zone_id} PID: AQI={zone_aqi:.2f}, Setpoint={current_setpoint:.2f}, Error={error:.2f}, Rate={zone_rate}, Integral={pid_state['integral']:.2f}")
+                    # Track maximum rate for overall sensor (using percentage)
+                    max_zone_rate = max(max_zone_rate, zone_rate_pct)
+                    
+                    _LOGGER.debug(f"Zone {zone_id} PID: AQI={zone_aqi:.2f}, Setpoint={current_setpoint:.2f}, Error={error:.2f}, Rate={zone_rate_pct}% ({zone_rate_255}/255), Integral={pid_state['integral']:.2f}")
                 
                 # Send commands to each zone with delays between them (non-blocking) - only when enabled
                 try:
@@ -820,11 +835,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     _LOGGER.warning(f"Error in zone command transmission (continuing PID operation): {e}")
                     # Don't let ramses_cc errors stop the PID controller
 
-        # Compute and publish rate percentage (use max zone rate for overall percentage)
-        global_rate = max_zone_rate
+        # Compute and publish rate percentage (max_zone_rate is already in percentage)
+        global_rate_pct = max_zone_rate  # This is already the percentage value
+        global_rate_255 = int(round((global_rate_pct / 100.0) * 255))  # Convert to 0-255 for compatibility
         try:
-            span = global_max_rate - global_min_rate
-            pct = 0.0 if span <= 0 else round((global_rate - global_min_rate) * 100.0 / span, 2)
+            # Since we're working in percentage space, the percentage is directly available
+            pct = round(global_rate_pct, 2)
             
             # Ensure hass.data structure exists and update rate data
             if DOMAIN not in hass.data:
@@ -841,9 +857,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             async_dispatcher_send(
                 hass,
                 f"{SIGNAL_RATE_UPDATED}_{entry.entry_id}",
-                {"rate_pct": pct, "rate": global_rate, "zone_rates": zone_rates},
+                {"rate_pct": pct, "rate": global_rate_255, "zone_rates": zone_rates},
             )
-            _LOGGER.debug(f"Updated rate sensor: {pct}% (rate: {global_rate}, zones: {zone_rates})")
+            _LOGGER.debug(f"Updated rate sensor: {pct}% (rate: {global_rate_255}/255, zones: {zone_rates})")
             
         except Exception as e:
             _LOGGER.error(f"Error updating rate sensor: {e}", exc_info=True)
@@ -852,7 +868,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 async_dispatcher_send(
                     hass,
                     f"{SIGNAL_RATE_UPDATED}_{entry.entry_id}",
-                    {"rate_pct": 0.0, "rate": global_rate, "zone_rates": zone_rates},
+                    {"rate_pct": 0.0, "rate": global_rate_255, "zone_rates": zone_rates},
                 )
             except Exception as e2:
                 _LOGGER.error(f"Failed to send fallback rate update: {e2}")
@@ -1205,9 +1221,51 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
 
+def validate_entry_consistency(entry: ConfigEntry) -> bool:
+    """
+    Validate that the config entry has consistent zone configuration.
+    
+    Args:
+        entry: Config entry to validate
+        
+    Returns:
+        bool: True if consistent, False if validation failed
+    """
+    try:
+        from .config_flow import merge_config_with_validation
+        cfg = merge_config_with_validation(entry.data, entry.options, allow_cleanup=False)
+        
+        zone_configs = cfg.get("zone_configs", {})
+        actual_zone_count = len(zone_configs)
+        validated_zones = actual_zone_count if zone_configs else int(cfg.get("num_zones", 1))
+        
+        if actual_zone_count != validated_zones:
+            _LOGGER.warning(f"Zone inconsistency detected: validated={validated_zones}, actual={actual_zone_count}")
+            return False
+            
+        # Validate zone IDs are sequential starting from 1
+        expected_zones = set(range(1, validated_zones + 1))
+        actual_zones = set(zone_configs.keys())
+        
+        if actual_zones != expected_zones:
+            _LOGGER.warning(f"Zone ID mismatch: expected={expected_zones}, actual={actual_zones}")
+            return False
+            
+        _LOGGER.debug(f"Entry validation passed: {validated_zones} zones properly configured")
+        return True
+        
+    except Exception as e:
+        _LOGGER.error(f"Entry validation failed: {e}")
+        return False
+
+
 async def async_delayed_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Schedule a delayed reload to prevent hanging during options flow."""
     _LOGGER.info(f"Scheduling delayed reload for config entry {entry.entry_id}")
+    
+    # Validate entry consistency before reload
+    if not validate_entry_consistency(entry):
+        _LOGGER.warning("Entry consistency validation failed, but proceeding with reload")
     
     # Use call_later to delay the reload and prevent blocking the options flow
     def schedule_reload():

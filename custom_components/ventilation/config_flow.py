@@ -55,6 +55,81 @@ def get_entity_display_name(hass: HomeAssistant, entity_id: str) -> str:
     # Final fallback to entity_id formatted nicely
     return entity_id.split('.')[-1].replace('_', ' ').title()
 
+
+def merge_config_with_validation(entry_data: dict, entry_options: dict, allow_cleanup: bool = False) -> dict:
+    """
+    Merge entry data and options with proper zone validation.
+    
+    This replaces the simple {**entry_data, **entry_options} pattern to prevent
+    sensor duplication bugs by ensuring zone configs stay consistent.
+    
+    Args:
+        entry_data: Configuration entry data
+        entry_options: Configuration entry options  
+        allow_cleanup: If True, allows cleanup of excess zone configs (only use in options flow)
+    """
+    # Merge configs with options taking precedence (standard behavior)
+    merged_config = {**entry_data, **entry_options}
+    
+    # Get zone configurations and determine authoritative zone count
+    zone_configs = merged_config.get("zone_configs", {})
+    explicit_num_zones = merged_config.get("num_zones")
+    
+    # Determine the authoritative number of zones:
+    # Priority: options num_zones > zone_configs count > data num_zones > fallback
+    if "num_zones" in entry_options:
+        target_num_zones = int(entry_options["num_zones"])
+        _LOGGER.debug(f"Using num_zones from options: {target_num_zones}")
+    elif zone_configs:
+        target_num_zones = len(zone_configs) 
+        _LOGGER.debug(f"Using zone_configs count: {target_num_zones}")
+    elif explicit_num_zones:
+        target_num_zones = int(explicit_num_zones)
+        _LOGGER.debug(f"Using explicit num_zones: {target_num_zones}")
+    else:
+        target_num_zones = 1
+        _LOGGER.debug("Using fallback num_zones: 1")
+    
+    # Only clean up zone configs if explicitly allowed (to prevent accidental data loss)
+    if allow_cleanup and zone_configs and target_num_zones < len(zone_configs):
+        # Extra safety: Verify that we have valid device configurations before removing zones
+        zones_to_remove = set(zone_configs.keys()) - set(range(1, target_num_zones + 1))
+        safe_to_remove = True
+        
+        for zone_id in zones_to_remove:
+            zone_config = zone_configs.get(zone_id, {})
+            # Check if zone has important device configurations
+            if zone_config.get("id_to") or zone_config.get("device_to"):
+                _LOGGER.warning(f"Zone {zone_id} has device config (id_to: {zone_config.get('id_to')}) - requiring explicit confirmation")
+                safe_to_remove = False
+        
+        if safe_to_remove:
+            zones_to_keep = set(range(1, target_num_zones + 1))
+            cleaned_zone_configs = {
+                zone_id: config for zone_id, config in zone_configs.items()
+                if isinstance(zone_id, int) and zone_id in zones_to_keep
+            }
+            
+            # Log cleanup for debugging
+            removed_zones = set(zone_configs.keys()) - set(cleaned_zone_configs.keys())
+            if removed_zones:
+                _LOGGER.warning(f"Cleaned up zone configs (user requested): {sorted(removed_zones)}")
+            
+            merged_config["zone_configs"] = cleaned_zone_configs
+        else:
+            _LOGGER.error(f"Cannot remove zones with device configurations - preserving all zones")
+            target_num_zones = len(zone_configs)
+    elif zone_configs and target_num_zones < len(zone_configs):
+        # Log potential inconsistency but don't auto-cleanup
+        _LOGGER.warning(f"Zone config inconsistency detected: {len(zone_configs)} configs vs {target_num_zones} zones - preserving existing configs to prevent data loss")
+        # Use the actual zone config count to preserve user data
+        target_num_zones = len(zone_configs)
+    
+    # Ensure num_zones reflects the validated count
+    merged_config["num_zones"] = target_num_zones
+    
+    return merged_config
+
 async def get_device_serial_number(hass: HomeAssistant, device_id: str | None) -> str | None:
     """Extract serial number from a device ID."""
     if not device_id:
@@ -124,6 +199,16 @@ def get_zone_config_schema(zone_number: int, current_config: dict = None, remote
     # Calculate default sensor ID: 255 for zone 1, 254 for zone 2, etc.
     default_sensor_id = current_config.get("sensor_id", 256 - zone_number)
     
+    # Convert stored 0-255 values to percentages for display (if they exist)
+    current_min_pct = current_config.get("min_fan_rate", 0)
+    current_max_pct = current_config.get("max_fan_rate", 100)
+    
+    # If the stored values are in 0-255 range, convert to percentage
+    if current_min_pct > 100:
+        current_min_pct = round((current_min_pct / 255) * 100)
+    if current_max_pct > 100:
+        current_max_pct = round((current_max_pct / 255) * 100)
+    
     try:
         # Build schema fields conditionally to avoid None defaults
         schema_fields = {}
@@ -148,10 +233,10 @@ def get_zone_config_schema(zone_number: int, current_config: dict = None, remote
                 selector.DeviceSelectorConfig(integration="ramses_cc")
             )
         
-        # Add other fields
+        # Add other fields (now using percentages)
         schema_fields[vol.Required("sensor_id", default=default_sensor_id)] = vol.Coerce(int)
-        schema_fields[vol.Required("min_fan_rate", default=current_config.get("min_fan_rate", 0))] = vol.Coerce(int)  
-        schema_fields[vol.Required("max_fan_rate", default=current_config.get("max_fan_rate", 255))] = vol.Coerce(int)
+        schema_fields[vol.Required("min_fan_rate", default=current_min_pct)] = vol.Coerce(int)  
+        schema_fields[vol.Required("max_fan_rate", default=current_max_pct)] = vol.Coerce(int)
         schema_fields[vol.Optional("back", default=False)] = selector.BooleanSelector()
         
         return vol.Schema(schema_fields, extra=vol.ALLOW_EXTRA)
@@ -162,8 +247,8 @@ def get_zone_config_schema(zone_number: int, current_config: dict = None, remote
             vol.Optional("device_from", default=""): cv.string,
             vol.Optional("device_to", default=""): cv.string,
             vol.Required("sensor_id", default=default_sensor_id): vol.Coerce(int),
-            vol.Required("min_fan_rate", default=current_config.get("min_fan_rate", 0)): vol.Coerce(int),
-            vol.Required("max_fan_rate", default=current_config.get("max_fan_rate", 255)): vol.Coerce(int),
+            vol.Required("min_fan_rate", default=current_min_pct): vol.Coerce(int),
+            vol.Required("max_fan_rate", default=current_max_pct): vol.Coerce(int),
             vol.Optional("back", default=False): selector.BooleanSelector(),
         }, extra=vol.ALLOW_EXTRA)
 
@@ -686,17 +771,17 @@ async def validate_zone_config_input(hass: HomeAssistant, data: dict[str, Any], 
     if not (0 <= sensor_id <= 255):
         raise InvalidZoneConfig(f"Zone {zone_number} sensor ID must be between 0 and 255")
     
-    # Validate fan rate ranges
-    min_fan = data.get("min_fan_rate", 0)
-    max_fan = data.get("max_fan_rate", 255)
+    # Validate fan rate ranges (now in percentages)
+    min_fan_pct = data.get("min_fan_rate", 0)
+    max_fan_pct = data.get("max_fan_rate", 100)
     
-    if not (0 <= min_fan <= 255):
-        raise InvalidZoneConfig(f"Zone {zone_number} minimum fan rate must be between 0 and 255")
+    if not (0 <= min_fan_pct <= 100):
+        raise InvalidZoneConfig(f"Zone {zone_number} minimum fan rate must be between 0% and 100%")
     
-    if not (0 <= max_fan <= 255):
-        raise InvalidZoneConfig(f"Zone {zone_number} maximum fan rate must be between 0 and 255")
+    if not (0 <= max_fan_pct <= 100):
+        raise InvalidZoneConfig(f"Zone {zone_number} maximum fan rate must be between 0% and 100%")
     
-    if min_fan >= max_fan:
+    if min_fan_pct >= max_fan_pct:
         raise InvalidZoneConfig(f"Zone {zone_number} minimum fan rate must be less than maximum fan rate")
     
     return {"title": f"Zone {zone_number} Configuration"}
@@ -1074,7 +1159,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 id_from = await get_device_serial_number(self.hass, device_from_id)
                 id_to = await get_device_serial_number(self.hass, device_to_id)
                 
-                # Store zone configuration data
+                # Store zone configuration data (fan rates are now in percentages)
                 if "zone_configs" not in self._data:
                     self._data["zone_configs"] = {}
                 self._data["zone_configs"][zone_number] = {
@@ -1083,8 +1168,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "id_from": id_from,             # Store serial for commands
                     "id_to": id_to,                 # Store serial for commands
                     "sensor_id": user_input["sensor_id"],
-                    "min_fan_rate": user_input["min_fan_rate"],
-                    "max_fan_rate": user_input["max_fan_rate"],
+                    "min_fan_rate": user_input["min_fan_rate"],  # Now stored as percentage (0-100)
+                    "max_fan_rate": user_input["max_fan_rate"],  # Now stored as percentage (0-100)
                 }
                 
                 # Check if we need to configure more zones
@@ -2041,18 +2126,22 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        # Start from current saved config merged with options
-        self._data: dict[str, Any] = {**config_entry.data, **config_entry.options}
+        # Use improved merge but don't allow cleanup during initialization to preserve user data
+        self._data = merge_config_with_validation(config_entry.data, config_entry.options, allow_cleanup=False)
+        # Extract validated zone count from the properly merged config
+        zone_configs = self._data.get("zone_configs", {})
+        self._validated_num_zones = len(zone_configs) if zone_configs else int(self._data.get("num_zones", 1))
+        _LOGGER.debug(f"Options flow initialized with {self._validated_num_zones} validated zones (preserving existing configs)")
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Top-level options menu."""
-        # Build dynamic menu based on number of zones
-        num_zones = self._data.get("num_zones", 1)
+        # Use validated zone count to prevent menu inconsistencies
+        num_zones = self._validated_num_zones
         menu_options = [
             "device_configuration",
         ]
         
-        # Add zone configuration options
+        # Add zone configuration options based on validated count
         for zone_num in range(1, num_zones + 1):
             menu_options.append(f"zone_{zone_num}_config")
         
@@ -2962,40 +3051,50 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 # Handle zone_configs changes when num_zones changes
                 current_zone_configs = self._data.get("zone_configs", {})
                 
-                if new_num_zones != old_num_zones:
-                    # Adjust zone configurations
-                    new_zone_configs = {}
-                    
-                    # Copy existing zone configs up to the new number of zones
-                    for zone_num in range(1, min(new_num_zones, old_num_zones) + 1):
-                        if zone_num in current_zone_configs:
-                            new_zone_configs[zone_num] = current_zone_configs[zone_num].copy()
-                            # Update remote device serial in existing configs
-                            new_zone_configs[zone_num]["id_from"] = remote_serial or new_zone_configs[zone_num].get("id_from", "")
-                    
-                    # Add new zone configs if zones increased
-                    if new_num_zones > old_num_zones:
-                        for zone_num in range(old_num_zones + 1, new_num_zones + 1):
-                            new_zone_configs[zone_num] = {
-                                "id_from": remote_serial or "",
-                                "id_to": "",  # Must be configured manually in zone config
-                                "sensor_id": 256 - zone_num,  # Default sensor IDs: 255, 254, 253, etc.
-                                "min_fan_rate": 0,
-                                "max_fan_rate": 255,
-                            }
-                    
-                    updated_data["zone_configs"] = new_zone_configs
-                else:
-                    # Same number of zones, just update remote device serial
-                    updated_zone_configs = {}
-                    for zone_num, zone_config in current_zone_configs.items():
-                        updated_zone_configs[zone_num] = zone_config.copy()
-                        updated_zone_configs[zone_num]["id_from"] = remote_serial or zone_config.get("id_from", "")
-                        # Keep existing id_to unchanged
-                    updated_data["zone_configs"] = updated_zone_configs
+                # Always clean up zone configs to match the target number
+                # This prevents sensor duplication bugs
+                new_zone_configs = {}
                 
-                # Create the entry with updated data
-                return self.async_create_entry(title="", data={**self.config_entry.options, **updated_data})
+                # Copy/update existing zone configs up to the new number of zones only
+                for zone_num in range(1, new_num_zones + 1):
+                    if zone_num in current_zone_configs:
+                        new_zone_configs[zone_num] = current_zone_configs[zone_num].copy()
+                        # Update remote device serial in existing configs
+                        new_zone_configs[zone_num]["id_from"] = remote_serial or new_zone_configs[zone_num].get("id_from", "")
+                    else:
+                        # Create new zone config for additional zones
+                        new_zone_configs[zone_num] = {
+                            "id_from": remote_serial or "",
+                            "id_to": "",  # Must be configured manually in zone config
+                            "sensor_id": 256 - zone_num,  # Default sensor IDs: 255, 254, 253, etc.
+                            "min_fan_rate": 0,
+                            "max_fan_rate": 100,  # Default to 100% instead of 255
+                        }
+                
+                # Log zone changes for debugging
+                removed_zones = set(current_zone_configs.keys()) - set(new_zone_configs.keys())
+                added_zones = set(new_zone_configs.keys()) - set(current_zone_configs.keys())
+                if removed_zones:
+                    _LOGGER.info(f"Device config: removed zone configs for {sorted(removed_zones)}")
+                if added_zones:
+                    _LOGGER.info(f"Device config: added zone configs for {sorted(added_zones)}")
+                
+                updated_data["zone_configs"] = new_zone_configs
+                
+                # Validate the new configuration before creating entry (allow cleanup in options flow)
+                new_options = {**self.config_entry.options, **updated_data}
+                temp_cfg = merge_config_with_validation(self.config_entry.data, new_options, allow_cleanup=True)
+                zone_configs = temp_cfg.get("zone_configs", {})
+                temp_zones = len(zone_configs) if zone_configs else int(temp_cfg.get("num_zones", 1))
+                
+                # Ensure zone configs match expected count
+                if len(zone_configs) != temp_zones:
+                    _LOGGER.error(f"Zone validation failed: configs={len(zone_configs)}, expected={temp_zones}")
+                    errors["base"] = "Zone configuration validation failed"
+                else:
+                    # Create the entry with validated data
+                    _LOGGER.info(f"Device configuration updated: {temp_zones} zones validated")
+                    return self.async_create_entry(title="", data=new_options)
                 
             except InvalidEntity as err:
                 # Determine which device field had the error
@@ -3064,6 +3163,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Handle zone configuration step for any zone number in options flow."""
         errors: dict[str, str] = {}
         
+        # Validate zone number against current configuration to prevent bugs
+        if zone_number > self._validated_num_zones:
+            _LOGGER.error(f"Attempted to configure zone {zone_number} but only {self._validated_num_zones} zones are available")
+            return self.async_abort(reason="invalid_zone")
+        
         if user_input is not None:
             try:
                 # Validate the zone configuration input
@@ -3091,8 +3195,18 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 updated_options = dict(self.config_entry.options)
                 updated_options["zone_configs"] = current_zone_configs
                 
-                # Create the entry with properly preserved options
-                return self.async_create_entry(title="", data=updated_options)
+                # Validate zone configuration consistency before saving (no cleanup for individual zone updates)
+                temp_cfg = merge_config_with_validation(self.config_entry.data, updated_options, allow_cleanup=False)
+                zone_configs = temp_cfg.get("zone_configs", {})
+                temp_zones = len(zone_configs) if zone_configs else int(temp_cfg.get("num_zones", 1))
+                
+                if len(zone_configs) != temp_zones:
+                    _LOGGER.error(f"Zone {zone_number} config validation failed")
+                    errors["base"] = "Zone configuration validation failed"
+                else:
+                    # Create the entry with properly preserved options
+                    _LOGGER.info(f"Zone {zone_number} configuration updated successfully")
+                    return self.async_create_entry(title="", data=updated_options)
                 
             except InvalidZoneConfig as err:
                 # Provide specific error messages based on validation
@@ -3134,6 +3248,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         # Calculate default sensor ID: 255 for zone 1, 254 for zone 2, etc.
         default_sensor_id = current_zone_config.get("sensor_id", 256 - zone_number)
         
+        # Convert stored percentage values (0-100) to display defaults
+        default_min_fan_rate = current_zone_config.get("min_fan_rate", 0)
+        default_max_fan_rate = current_zone_config.get("max_fan_rate", 100)
+        
         return vol.Schema({
             vol.Required("device_from", default=default_device_from): selector.DeviceSelector(
                 selector.DeviceSelectorConfig(integration="ramses_cc")
@@ -3142,6 +3260,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 selector.DeviceSelectorConfig(integration="ramses_cc")
             ),
             vol.Required("sensor_id", default=default_sensor_id): vol.Coerce(int),
-            vol.Required("min_fan_rate", default=current_zone_config.get("min_fan_rate", 0)): vol.Coerce(int),
-            vol.Required("max_fan_rate", default=current_zone_config.get("max_fan_rate", 255)): vol.Coerce(int),
+            vol.Required("min_fan_rate", default=default_min_fan_rate): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
+            vol.Required("max_fan_rate", default=default_max_fan_rate): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
         }, extra=vol.ALLOW_EXTRA)

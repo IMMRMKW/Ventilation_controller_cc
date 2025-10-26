@@ -1,12 +1,11 @@
 {
   "domain": "ventilation",
   "name": "PID Ventilation Control",
-  "version": "1.0",
+  "version": "2.2.0-dev",
   "requirements": [],
   "codeowners": [],
   "dependencies": [],
   "documentation": "https://github.com/yourrepo/ventilation",
   "config_flow": true,
-  "iot_class": "local_polling",
-  "version": "2.0"
+  "iot_class": "local_polling"
 }

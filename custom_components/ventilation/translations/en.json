@@ -32,16 +32,16 @@
           "device_from": "From Device (Source)",
           "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
-          "min_fan_rate": "Minimum Fan Rate",
-          "max_fan_rate": "Maximum Fan Rate",
+          "min_fan_rate": "Minimum Fan Rate (%)",
+          "max_fan_rate": "Maximum Fan Rate (%)",
           "back": "Back"
         },
         "data_description": {
           "device_from": "Source device (typically your remote control device)",
           "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
-          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
-          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+          "min_fan_rate": "Minimum fan speed percentage for this zone (0-100%)",
+          "max_fan_rate": "Maximum fan speed percentage for this zone (0-100%)"
         }
       },
       "zone_config_2": {
@@ -51,16 +51,16 @@
           "device_from": "From Device (Source)",
           "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
-          "min_fan_rate": "Minimum Fan Rate",
-          "max_fan_rate": "Maximum Fan Rate",
+          "min_fan_rate": "Minimum Fan Rate (%)",
+          "max_fan_rate": "Maximum Fan Rate (%)",
           "back": "Back"
         },
         "data_description": {
           "device_from": "Source device (typically your remote control device)",
           "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
-          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
-          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+          "min_fan_rate": "Minimum fan speed percentage for this zone (0-100%)",
+          "max_fan_rate": "Maximum fan speed percentage for this zone (0-100%)"
         }
       },
       "zone_config_3": {
@@ -70,16 +70,16 @@
           "device_from": "From Device (Source)",
           "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
-          "min_fan_rate": "Minimum Fan Rate",
-          "max_fan_rate": "Maximum Fan Rate",
+          "min_fan_rate": "Minimum Fan Rate (%)",
+          "max_fan_rate": "Maximum Fan Rate (%)",
           "back": "Back"
         },
         "data_description": {
           "device_from": "Source device (typically your remote control device)",
           "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
-          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
-          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+          "min_fan_rate": "Minimum fan speed percentage for this zone (0-100%)",
+          "max_fan_rate": "Maximum fan speed percentage for this zone (0-100%)"
         }
       },
       "zone_config_4": {
@@ -89,16 +89,16 @@
           "device_from": "From Device (Source)",
           "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
-          "min_fan_rate": "Minimum Fan Rate",
-          "max_fan_rate": "Maximum Fan Rate",
+          "min_fan_rate": "Minimum Fan Rate (%)",
+          "max_fan_rate": "Maximum Fan Rate (%)",
           "back": "Back"
         },
         "data_description": {
           "device_from": "Source device (typically your remote control device)",
           "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
-          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
-          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+          "min_fan_rate": "Minimum fan speed percentage for this zone (0-100%)",
+          "max_fan_rate": "Maximum fan speed percentage for this zone (0-100%)"
         }
       },
       "zone_config_5": {
@@ -108,16 +108,16 @@
           "device_from": "From Device (Source)",
           "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
-          "min_fan_rate": "Minimum Fan Rate",
-          "max_fan_rate": "Maximum Fan Rate",
+          "min_fan_rate": "Minimum Fan Rate (%)",
+          "max_fan_rate": "Maximum Fan Rate (%)",
           "back": "Back"
         },
         "data_description": {
           "device_from": "Source device (typically your remote control device)",
           "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
-          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
-          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+          "min_fan_rate": "Minimum fan speed percentage for this zone (0-100%)",
+          "max_fan_rate": "Maximum fan speed percentage for this zone (0-100%)"
         }
       },
       "pid_parameters": {
@@ -402,15 +402,15 @@
           "device_from": "From Device (Source)",
           "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
-          "min_fan_rate": "Minimum Fan Rate",
-          "max_fan_rate": "Maximum Fan Rate"
+          "min_fan_rate": "Minimum Fan Rate (%)",
+          "max_fan_rate": "Maximum Fan Rate (%)"
         },
         "data_description": {
           "device_from": "Source device (typically your remote control device)",
           "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
-          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
-          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+          "min_fan_rate": "Minimum fan speed percentage for this zone (0-100%)",
+          "max_fan_rate": "Maximum fan speed percentage for this zone (0-100%)"
         }
       },
       "zone_2_config": {
@@ -420,15 +420,15 @@
           "device_from": "From Device (Source)",
           "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
-          "min_fan_rate": "Minimum Fan Rate",
-          "max_fan_rate": "Maximum Fan Rate"
+          "min_fan_rate": "Minimum Fan Rate (%)",
+          "max_fan_rate": "Maximum Fan Rate (%)"
         },
         "data_description": {
           "device_from": "Source device (typically your remote control device)",
           "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
-          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
-          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+          "min_fan_rate": "Minimum fan speed percentage for this zone (0-100%)",
+          "max_fan_rate": "Maximum fan speed percentage for this zone (0-100%)"
         }
       },
       "zone_3_config": {
@@ -438,15 +438,15 @@
           "device_from": "From Device (Source)",
           "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
-          "min_fan_rate": "Minimum Fan Rate",
-          "max_fan_rate": "Maximum Fan Rate"
+          "min_fan_rate": "Minimum Fan Rate (%)",
+          "max_fan_rate": "Maximum Fan Rate (%)"
         },
         "data_description": {
           "device_from": "Source device (typically your remote control device)",
           "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
-          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
-          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+          "min_fan_rate": "Minimum fan speed percentage for this zone (0-100%)",
+          "max_fan_rate": "Maximum fan speed percentage for this zone (0-100%)"
         }
       },
       "zone_4_config": {
@@ -456,15 +456,15 @@
           "device_from": "From Device (Source)",
           "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
-          "min_fan_rate": "Minimum Fan Rate",
-          "max_fan_rate": "Maximum Fan Rate"
+          "min_fan_rate": "Minimum Fan Rate (%)",
+          "max_fan_rate": "Maximum Fan Rate (%)"
         },
         "data_description": {
           "device_from": "Source device (typically your remote control device)",
           "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
-          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
-          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+          "min_fan_rate": "Minimum fan speed percentage for this zone (0-100%)",
+          "max_fan_rate": "Maximum fan speed percentage for this zone (0-100%)"
         }
       },
       "zone_5_config": {
@@ -474,15 +474,15 @@
           "device_from": "From Device (Source)",
           "device_to": "To Device (Target)",
           "sensor_id": "Sensor ID",
-          "min_fan_rate": "Minimum Fan Rate",
-          "max_fan_rate": "Maximum Fan Rate"
+          "min_fan_rate": "Minimum Fan Rate (%)",
+          "max_fan_rate": "Maximum Fan Rate (%)"
         },
         "data_description": {
           "device_from": "Source device (typically your remote control device)",
           "device_to": "Target device (fan controller or valve for this zone)",
           "sensor_id": "Sensor identifier for this zone in the message (0-255, defaults to 255 for zone 1, 254 for zone 2, etc.)",
-          "min_fan_rate": "Minimum fan speed value for this zone (0-255)",
-          "max_fan_rate": "Maximum fan speed value for this zone (0-255)"
+          "min_fan_rate": "Minimum fan speed percentage for this zone (0-100%)",
+          "max_fan_rate": "Maximum fan speed percentage for this zone (0-100%)"
         }
       },
       "sensor_types": {

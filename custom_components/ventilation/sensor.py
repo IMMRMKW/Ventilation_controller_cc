@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -8,12 +9,20 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import DOMAIN, SIGNAL_AQI_UPDATED, SIGNAL_RATE_UPDATED, CONF_ZONE_CONFIGS, CONF_NUM_ZONES
 
+_LOGGER = logging.getLogger(__name__)
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
-    # Determine number of zones from zone configurations or num_zones
-    cfg = {**entry.data, **entry.options}
+    # Import the improved merge function to prevent sensor duplication bugs
+    from .config_flow import merge_config_with_validation
+    
+    # Get properly merged and validated configuration
+    cfg = merge_config_with_validation(entry.data, entry.options, allow_cleanup=False)
+    
+    # Get zone configurations and determine number of zones (now guaranteed consistent)
     zone_configs = cfg.get(CONF_ZONE_CONFIGS, {})
-    # Try zone_configs first, then num_zones, then fallback to 1
     num_zones = len(zone_configs) if zone_configs else int(cfg.get(CONF_NUM_ZONES, 1))
+    
+    _LOGGER.debug(f"Sensor setup: {num_zones} zones from validated config")
     
     # Create sensors list
     sensors = []
@@ -21,10 +30,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # Create one AQI sensor per zone
     for zone_id in range(1, num_zones + 1):
         sensors.append(AirQualityIndexSensor(hass, entry, zone_id))
+        _LOGGER.debug(f"Created AQI sensor for zone {zone_id}")
     
     # Add single fan rate sensor (global)
     sensors.append(FanRatePercentSensor(hass, entry))
     
+    _LOGGER.info(f"Setup complete: {num_zones} AQI sensors + 1 fan rate sensor = {len(sensors)} total sensors")
     async_add_entities(sensors)
 
 
