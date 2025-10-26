@@ -256,8 +256,8 @@ def get_zone_config_schema(zone_number: int, current_config: dict = None, remote
 def get_pid_parameters_schema():
     """Generate schema for PID parameters (including Ki times)."""
     return vol.Schema({
-        vol.Required("setpoint", default=1.2): vol.Coerce(float),
-        vol.Required("kp", default=25.5): vol.Coerce(float),
+        vol.Required("setpoint", default=1.2): cv.small_float,
+        vol.Required("kp", default=25.5): cv.small_float,
         vol.Required("ki_times", default="3600,1800,900,450,225,150"): cv.string,
         vol.Required("update_interval", default=300): vol.Coerce(int),
         vol.Optional("back", default=False): selector.BooleanSelector(),
@@ -2295,8 +2295,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             pass
         
         return vol.Schema({
-            vol.Required("setpoint", default=current_setpoint): vol.Coerce(float),
-            vol.Required("kp", default=cur.get("kp", 25.5)): vol.Coerce(float),
+            vol.Required("setpoint", default=current_setpoint): cv.small_float,
+            vol.Required("kp", default=cur.get("kp", 25.5)): cv.small_float,
             vol.Required("ki_times", default=",".join(map(str, cur.get("ki_times", [3600, 1800, 900, 450, 225, 150])))): cv.string,
             vol.Required("update_interval", default=cur.get("update_interval", 300)): vol.Coerce(int),
         }, extra=vol.ALLOW_EXTRA)
