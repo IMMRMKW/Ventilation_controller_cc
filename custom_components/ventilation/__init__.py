@@ -361,8 +361,23 @@ async def send_zone_commands_with_delay(hass: HomeAssistant, zone_configs: dict,
             _LOGGER.warning(f"Zone {zone_id} missing ID configuration, skipping command")
             return
             
-        # Create unique command name for this zone and rate
-        command_name = f"zone_{zone_id}_rate_{zone_rate}"
+        # Create unique command name that includes sensor_id and device IDs to handle config changes
+        # This ensures that when sensor ID or devices change, new commands are created
+        id_from_short = id_from.replace(":", "")[-6:]  # Last 6 chars of id_from
+        id_to_short = id_to.replace(":", "")[-6:]      # Last 6 chars of id_to
+        command_name = f"zone_{zone_id}_rate_{zone_rate}_sensor_{sensor_id}_{id_from_short}_{id_to_short}"
+        
+        # Clear any old commands for this zone that might have different sensor/device config
+        # This handles cases where sensor ID or device IDs changed
+        old_commands_to_remove = []
+        for existing_cmd in added_commands:
+            if existing_cmd.startswith(f"zone_{zone_id}_rate_{zone_rate}_") and existing_cmd != command_name:
+                old_commands_to_remove.append(existing_cmd)
+        
+        # Remove old commands from tracking (ramses_cc will keep them, but we won't reuse them)
+        for old_cmd in old_commands_to_remove:
+            added_commands.discard(old_cmd)
+            _LOGGER.info(f"Removed old command '{old_cmd}' due to configuration change")
         
         # Check if this command has been added before
         if command_name not in added_commands:
@@ -415,8 +430,9 @@ async def send_zone_commands_with_delay(hass: HomeAssistant, zone_configs: dict,
         try:
             # Use asyncio.create_task to completely detach the service call
             # This ensures our PID controller never gets blocked by ramses_cc timeouts
-            async def send_command_with_timeout():
+            async def send_command_with_retry():
                 try:
+                    # First attempt to send the command
                     await asyncio.wait_for(
                         hass.services.async_call(
                             "ramses_cc", "send_command",
@@ -428,18 +444,58 @@ async def send_zone_commands_with_delay(hass: HomeAssistant, zone_configs: dict,
                         ),
                         timeout=10.0  # 10 second timeout for send_command
                     )
-                except asyncio.TimeoutError:
-                    _LOGGER.warning(f"Timeout sending command '{command_name}' to zone {zone_id}")
-                except Exception as e:
-                    _LOGGER.warning(f"Error sending command '{command_name}' to zone {zone_id}: {e}")
+                    _LOGGER.debug(f"Successfully sent command '{command_name}' to zone {zone_id}")
+                    
+                except Exception as send_error:
+                    _LOGGER.warning(f"Send command '{command_name}' failed: {send_error}. Attempting to re-add command and retry...")
+                    
+                    # Command likely doesn't exist (ramses_cc restarted), re-add it and try again
+                    try:
+                        # Re-add the command
+                        formatted_command = format_zone_command(id_from, id_to, zone_rate, sensor_id)
+                        await asyncio.wait_for(
+                            hass.services.async_call(
+                                "ramses_cc", "add_command",
+                                {
+                                    "entity_id": remote_entity_id,
+                                    "command": command_name,
+                                    "packet_string": formatted_command
+                                },
+                                blocking=False
+                            ),
+                            timeout=5.0  # 5 second timeout for add_command
+                        )
+                        _LOGGER.info(f"Re-added command '{command_name}' after send failure")
+                        
+                        # Small delay to let ramses_cc process the add
+                        await asyncio.sleep(0.2)
+                        
+                        # Retry sending the command
+                        await asyncio.wait_for(
+                            hass.services.async_call(
+                                "ramses_cc", "send_command",
+                                {
+                                    "entity_id": remote_entity_id,
+                                    "command": command_name
+                                },
+                                blocking=False
+                            ),
+                            timeout=10.0  # 10 second timeout for retry
+                        )
+                        _LOGGER.info(f"Successfully sent command '{command_name}' to zone {zone_id} after re-add")
+                        
+                    except Exception as retry_error:
+                        _LOGGER.error(f"Failed to re-add or retry command '{command_name}' for zone {zone_id}: {retry_error}")
+                        # Remove from added_commands so it gets re-added next time
+                        added_commands.discard(command_name)
             
             hass.async_create_task(
-                send_command_with_timeout(),
+                send_command_with_retry(),
                 name=f"ramses_send_{command_name}"
             )
             _LOGGER.debug(f"Successfully initiated command to zone {zone_id}")
         except Exception as e:
-            _LOGGER.error(f"Failed to send command '{command_name}' to zone {zone_id}: {e}")
+            _LOGGER.error(f"Failed to initiate command '{command_name}' to zone {zone_id}: {e}")
     
     # Create tasks to send commands with staggered delays
     tasks = []
@@ -650,12 +706,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if zone_id in stored_zone_pid_states:
                 zone_pid_states[zone_id] = stored_zone_pid_states[zone_id]
         
+        # Get current configuration (includes any options updates)
+        current_cfg = {**entry.data, **entry.options}
+        
+        # Reload zone configurations from current merged config to pick up any device changes
+        from .config_flow import merge_config_with_validation
+        current_merged_cfg = merge_config_with_validation(entry.data, entry.options, allow_cleanup=False)
+        current_zone_configs = current_merged_cfg.get(CONF_ZONE_CONFIGS, {})
+        
         # Get current setpoint (may have been updated via number entity)
         runtime_setpoint = entry_data.get("current_setpoint")
         if runtime_setpoint is not None:
             current_setpoint = runtime_setpoint
         else:
-            current_cfg = {**entry.data, **entry.options}
             current_setpoint = current_cfg.get(CONF_SETPOINT, setpoint)
          
         # Calculate time difference since last execution
@@ -679,7 +742,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         worst_dc = ""
         worst_zone = 1
         
-        for zone_id in range(1, num_zones + 1):
+        # Use current number of zones from current config
+        current_num_zones = len(current_zone_configs) if current_zone_configs else int(current_merged_cfg.get(CONF_NUM_ZONES, 1))
+        
+        for zone_id in range(1, current_num_zones + 1):
             zone_aqi, zone_worst_entity, zone_worst_value, zone_worst_dc = _calculate_zone_air_quality(
                 hass,
                 zone_id,
@@ -763,15 +829,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.debug("Controller enabled - running PID calculations")
             
             # Check if we have zone configurations
-            if not zone_configs:
+            if not current_zone_configs:
                 _LOGGER.warning("No zone configurations found, cannot send fan commands")
                 # Set empty rates for sensors
-                for zone_id in range(1, num_zones + 1):
+                for zone_id in range(1, current_num_zones + 1):
                     zone_rates[zone_id] = 0
                 max_zone_rate = 0
             else:
                 # Run separate PID controllers for each zone
-                for zone_id, zone_config in zone_configs.items():
+                for zone_id, zone_config in current_zone_configs.items():
                     # Get zone-specific parameters
                     id_from = zone_config.get(CONF_ZONE_ID_FROM)
                     id_to = zone_config.get(CONF_ZONE_ID_TO)
@@ -830,7 +896,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 
                 # Send commands to each zone with delays between them (non-blocking) - only when enabled
                 try:
-                    await send_zone_commands_with_delay(hass, zone_configs, zone_rates, remote_entity_id, entry_data)
+                    await send_zone_commands_with_delay(hass, current_zone_configs, zone_rates, remote_entity_id, entry_data)
                 except Exception as e:
                     _LOGGER.warning(f"Error in zone command transmission (continuing PID operation): {e}")
                     # Don't let ramses_cc errors stop the PID controller
@@ -924,6 +990,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Register services for binding CO2 sensors to zones
     await _register_bind_services(hass, entry, zone_configs)
+
+    # Clean up orphaned zone entities if number of zones was reduced
+    await _cleanup_orphaned_zone_entities(hass, entry, num_zones)
 
     # Ensure switch platform is set up after state exists
     try:
@@ -1142,6 +1211,46 @@ async def _execute_binding_sequence(hass: HomeAssistant, device_id: str, control
         
     except Exception as e:
         _LOGGER.error(f"Error executing binding sequence for zone {zone_number}: {e}", exc_info=True)
+
+
+async def _cleanup_orphaned_zone_entities(hass: HomeAssistant, entry: ConfigEntry, current_num_zones: int):
+    """Remove orphaned zone entities when zone count is reduced."""
+    try:
+        entity_registry = er.async_get(hass)
+        
+        # Find all AQI sensors for this integration
+        aqi_entities = [
+            entity for entity in entity_registry.entities.values()
+            if entity.config_entry_id == entry.entry_id
+            and entity.domain == "sensor"
+            and entity.unique_id and "_aqi_zone_" in entity.unique_id
+        ]
+        
+        # Remove entities for zones that no longer exist
+        removed_count = 0
+        for entity in aqi_entities:
+            # Extract zone number from unique_id (format: "<entry_id>_aqi_zone_<zone_id>")
+            try:
+                zone_id_str = entity.unique_id.split("_aqi_zone_")[-1]
+                zone_id = int(zone_id_str)
+                
+                # Remove if this zone is beyond the current zone count
+                if zone_id > current_num_zones:
+                    _LOGGER.info(f"Removing orphaned AQI sensor for zone {zone_id} (unique_id: {entity.unique_id})")
+                    entity_registry.async_remove(entity.entity_id)
+                    removed_count += 1
+                    
+            except (ValueError, IndexError) as e:
+                _LOGGER.warning(f"Could not parse zone ID from entity unique_id {entity.unique_id}: {e}")
+                continue
+        
+        if removed_count > 0:
+            _LOGGER.info(f"Cleaned up {removed_count} orphaned zone entities")
+        else:
+            _LOGGER.debug("No orphaned zone entities to clean up")
+            
+    except Exception as e:
+        _LOGGER.error(f"Error cleaning up orphaned zone entities: {e}", exc_info=True)
 
 
 async def _unregister_bind_services(hass: HomeAssistant, entry: ConfigEntry):

@@ -1,7 +1,7 @@
 {
   "domain": "ventilation",
   "name": "PID Ventilation Control",
-  "version": "2.1.0-dev",
+  "version": "2.2.0-dev",
   "requirements": [],
   "codeowners": [],
   "dependencies": [],

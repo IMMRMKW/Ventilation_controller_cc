@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
+from homeassistant.helpers import selector
 from homeassistant.helpers.selector import BooleanSelector
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers import entity_registry as er
@@ -255,18 +256,23 @@ def get_zone_config_schema(zone_number: int, current_config: dict = None, remote
 
 def get_pid_parameters_schema():
     """Generate schema for PID parameters (including Ki times)."""
-    # Custom validator for locale-aware float input with range validation
-    def validate_float_with_locale(min_val: float, max_val: float):
-        return vol.All(
-            vol.Coerce(str),
-            lambda v: str(v).replace(',', '.'),  # Convert comma to dot for locale compatibility
-            vol.Coerce(float),
-            vol.Range(min=min_val, max=max_val),
-        )
-    
     return vol.Schema({
-        vol.Required("setpoint", default=1.2): validate_float_with_locale(0.0, 5.0),
-        vol.Required("kp", default=25.5): validate_float_with_locale(0.1, 1000.0),
+        vol.Required("setpoint", default=1.2): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0.0,
+                max=5.0,
+                step=0.1,
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Required("kp", default=25.5): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0.1,
+                max=1000.0,
+                step=0.1,
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
         vol.Required("ki_times", default="3600,1800,900,450,225,150"): cv.string,
         vol.Required("update_interval", default=300): vol.Coerce(int),
         vol.Optional("back", default=False): selector.BooleanSelector(),
@@ -2303,18 +2309,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             # If we can't get the runtime value, stick with the configured value
             pass
         
-        # Custom validator for locale-aware float input with range validation
-        def validate_float_with_locale(min_val: float, max_val: float):
-            return vol.All(
-                vol.Coerce(str),
-                lambda v: str(v).replace(',', '.'),  # Convert comma to dot for locale compatibility
-                vol.Coerce(float),
-                vol.Range(min=min_val, max=max_val),
-            )
-        
         return vol.Schema({
-            vol.Required("setpoint", default=current_setpoint): validate_float_with_locale(0.0, 5.0),
-            vol.Required("kp", default=cur.get("kp", 25.5)): validate_float_with_locale(0.1, 1000.0),
+            vol.Required("setpoint", default=current_setpoint): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0.0,
+                    max=5.0,
+                    step=0.1,
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Required("kp", default=cur.get("kp", 25.5)): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0.1,
+                    max=1000.0,
+                    step=0.1,
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
             vol.Required("ki_times", default=",".join(map(str, cur.get("ki_times", [3600, 1800, 900, 450, 225, 150])))): cv.string,
             vol.Required("update_interval", default=cur.get("update_interval", 300)): vol.Coerce(int),
         }, extra=vol.ALLOW_EXTRA)
@@ -3278,6 +3289,22 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 selector.DeviceSelectorConfig(integration="ramses_cc")
             ),
             vol.Required("sensor_id", default=default_sensor_id): vol.Coerce(int),
-            vol.Required("min_fan_rate", default=default_min_fan_rate): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
-            vol.Required("max_fan_rate", default=default_max_fan_rate): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
+            vol.Required("min_fan_rate", default=default_min_fan_rate): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=100,
+                    step=1,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="%",
+                )
+            ),
+            vol.Required("max_fan_rate", default=default_max_fan_rate): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=100,
+                    step=1,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="%",
+                )
+            ),
         }, extra=vol.ALLOW_EXTRA)
