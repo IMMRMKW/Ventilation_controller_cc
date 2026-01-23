@@ -29,6 +29,21 @@ from .const import (
 )
 _LOGGER = logging.getLogger(__name__)
 
+
+def normalize_zone_configs(zone_configs: dict | None) -> dict[int, dict]:
+    """Coerce zone config keys to ints so reloads don't lose mappings."""
+    if not isinstance(zone_configs, dict):
+        return {}
+    normalized: dict[int, dict] = {}
+    for zone_id_raw, config in zone_configs.items():
+        try:
+            zone_id = int(zone_id_raw)
+        except (TypeError, ValueError):
+            _LOGGER.warning(f"Ignoring zone config with non-numeric key: {zone_id_raw}")
+            continue
+        normalized[zone_id] = config
+    return normalized
+
 def get_zone_options(num_zones: int) -> list[selector.SelectOptionDict]:
     """Generate zone selection options based on number of zones."""
     options = []
@@ -73,7 +88,8 @@ def merge_config_with_validation(entry_data: dict, entry_options: dict, allow_cl
     merged_config = {**entry_data, **entry_options}
     
     # Get zone configurations and determine authoritative zone count
-    zone_configs = merged_config.get("zone_configs", {})
+    zone_configs = normalize_zone_configs(merged_config.get("zone_configs", {}))
+    merged_config["zone_configs"] = zone_configs  # ensure normalized keys are persisted
     explicit_num_zones = merged_config.get("num_zones")
     
     # Determine the authoritative number of zones:
@@ -2148,6 +2164,37 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         self._validated_num_zones = len(zone_configs) if zone_configs else int(self._data.get("num_zones", 1))
         _LOGGER.debug(f"Options flow initialized with {self._validated_num_zones} validated zones (preserving existing configs)")
 
+    def _build_title(self, cfg: dict[str, Any]) -> str:
+        """Recompute entry title based on sensors and zones."""
+        zone_configs = normalize_zone_configs(cfg.get("zone_configs", {}))
+        num_zones = len(zone_configs) if zone_configs else int(cfg.get("num_zones", 1))
+
+        def _normalize_list(value):
+            if isinstance(value, list):
+                return value
+            return [value] if value else []
+
+        sensor_sets = [
+            (_normalize_list(cfg.get("co2_sensors")), "CO2"),
+            (_normalize_list(cfg.get("voc_sensors")), "VOC"),
+            (_normalize_list(cfg.get("pm_sensors")), "PM"),
+            (_normalize_list(cfg.get("humidity_sensors")), "Humidity"),
+        ]
+
+        total_sensors = sum(len(s) for s, _ in sensor_sets)
+        sensor_types = [label for sensors, label in sensor_sets if sensors]
+        types_str = f"{'/'.join(sensor_types)} sensors" if sensor_types else "sensors"
+        zones_str = f"{num_zones} zone{'s' if num_zones != 1 else ''}"
+        return f"PID Ventilation Control ({total_sensors} {types_str}, {zones_str})"
+
+    def _finalize_options(self, options: dict[str, Any]) -> FlowResult:
+        """Update entry title and save options consistently."""
+        merged_cfg = {**self.config_entry.data, **options}
+        merged_cfg["zone_configs"] = normalize_zone_configs(merged_cfg.get("zone_configs", {}))
+        new_title = self._build_title(merged_cfg)
+        self.hass.config_entries.async_update_entry(self.config_entry, title=new_title)
+        return self.async_create_entry(title="", data=options)
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Top-level options menu."""
         # Use validated zone count to prevent menu inconsistencies
@@ -2235,7 +2282,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 if not errors:
                     options = {**self.config_entry.options}
                     options.update(validated_data)
-                    return self.async_create_entry(title="", data=options)
+                    return self._finalize_options(options)
                     
             except Exception as e:
                 _LOGGER.error(f"Unknown error in fan_settings: {e}", exc_info=True)
@@ -2278,7 +2325,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 
                 # If no validation errors, create the entry
                 if not errors:
-                    return self.async_create_entry(title="", data={**self.config_entry.options, **{key: self._data[key] for key in self._data if key.endswith('_index')}})
+                    return self._finalize_options({**self.config_entry.options, **{key: self._data[key] for key in self._data if key.endswith('_index')}})
                     
             except Exception as e:
                 _LOGGER.error(f"Unknown error in iaq_settings: {e}", exc_info=True)
@@ -2412,7 +2459,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     else:
                         _LOGGER.warning(f"Could not update runtime setpoint - entry_data: {type(entry_data)}, has setpoint: {'setpoint' in validated_data}")
                     
-                    return self.async_create_entry(title="", data={**self.config_entry.options, **validated_data})
+                    return self._finalize_options({**self.config_entry.options, **validated_data})
                     
             except Exception as e:
                 _LOGGER.error(f"Unknown error in pid_settings: {e}", exc_info=True)
@@ -2463,7 +2510,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                                "co2_sensor_zones", "voc_sensor_zones", "pm_sensor_zones", "humidity_sensor_zones"):
                         if key in self._data:
                             sensor_data[key] = self._data[key]
-                    return self.async_create_entry(title="", data={**self.config_entry.options, **sensor_data})
+                    return self._finalize_options({**self.config_entry.options, **sensor_data})
                 
                 # Navigate to the first newly enabled sensor type
                 for sensor_type in ("use_co2_sensors", "use_voc_sensors", "use_pm_sensors", "use_humidity_sensors"):
@@ -2478,7 +2525,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                             return await self.async_step_humidity_sensors_options()
                 
                 # Fallback - should not reach here
-                return self.async_create_entry(title="", data={**self.config_entry.options, **updated_data})
+                return self._finalize_options({**self.config_entry.options, **updated_data})
                     
             except InvalidSensor as err:
                 errors["base"] = "no_sensor_types"
@@ -2553,7 +2600,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                             if key in self._data:
                                 sensor_data[key] = self._data[key]
                         
-                        return self.async_create_entry(title="", data={**self.config_entry.options, **sensor_data})
+                        return self._finalize_options({**self.config_entry.options, **sensor_data})
                     
             except InvalidSensor as err:
                 errors["co2_sensors"] = "invalid_sensor"
@@ -2621,17 +2668,26 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         if key in self._data:
                             sensor_data[key] = self._data[key]
                     
-                    return self.async_create_entry(title="", data={**self.config_entry.options, **sensor_data})
+                    return self._finalize_options({**self.config_entry.options, **sensor_data})
                     
             except Exception as err:
                 errors["base"] = "unknown"
                 _LOGGER.error(f"Unexpected error in CO2 zones options: {err}", exc_info=True)
 
         # Show the zone assignment form
+        sensors = self._data.get("co2_sensors", [])
+        placeholders = {
+            "sensor_count": str(len(sensors)),
+            "zone_count": str(self._data.get("num_zones", 1)),
+        }
+        for i, sensor in enumerate(sensors):
+            placeholders[f"sensor_{i}_name"] = get_entity_display_name(self.hass, sensor)
+
         return self.async_show_form(
             step_id="co2_sensors_zones_options",
             data_schema=self._schema_co2_sensors_zones_options(),
             errors=errors,
+            description_placeholders=placeholders,
         )
 
     def _schema_co2_sensors_zones_options(self) -> vol.Schema:
@@ -2748,10 +2804,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 _LOGGER.error(f"Unexpected error in VOC zones options: {err}", exc_info=True)
 
         # Show the zone assignment form
+        sensors = self._data.get("voc_sensors", [])
+        placeholders = {
+            "sensor_count": str(len(sensors)),
+            "zone_count": str(self._data.get("num_zones", 1)),
+        }
+        for i, sensor in enumerate(sensors):
+            placeholders[f"sensor_{i}_name"] = get_entity_display_name(self.hass, sensor)
+
         return self.async_show_form(
             step_id="voc_sensors_zones_options",
             data_schema=self._schema_voc_sensors_zones_options(),
             errors=errors,
+            description_placeholders=placeholders,
         )
 
     def _schema_voc_sensors_zones_options(self) -> vol.Schema:
@@ -2868,10 +2933,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 _LOGGER.error(f"Unexpected error in PM zones options: {err}", exc_info=True)
 
         # Show the zone assignment form
+        sensors = self._data.get("pm_sensors", [])
+        placeholders = {
+            "sensor_count": str(len(sensors)),
+            "zone_count": str(self._data.get("num_zones", 1)),
+        }
+        for i, sensor in enumerate(sensors):
+            placeholders[f"sensor_{i}_name"] = get_entity_display_name(self.hass, sensor)
+
         return self.async_show_form(
             step_id="pm_sensors_zones_options",
             data_schema=self._schema_pm_sensors_zones_options(),
             errors=errors,
+            description_placeholders=placeholders,
         )
 
     def _schema_pm_sensors_zones_options(self) -> vol.Schema:
@@ -2988,10 +3062,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 _LOGGER.error(f"Unexpected error in Humidity zones options: {err}", exc_info=True)
 
         # Show the zone assignment form
+        sensors = self._data.get("humidity_sensors", [])
+        placeholders = {
+            "sensor_count": str(len(sensors)),
+            "zone_count": str(self._data.get("num_zones", 1)),
+        }
+        for i, sensor in enumerate(sensors):
+            placeholders[f"sensor_{i}_name"] = get_entity_display_name(self.hass, sensor)
+
         return self.async_show_form(
             step_id="humidity_sensors_zones_options",
             data_schema=self._schema_humidity_sensors_zones_options(),
             errors=errors,
+            description_placeholders=placeholders,
         )
 
     def _schema_humidity_sensors_zones_options(self) -> vol.Schema:
@@ -3052,7 +3135,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             if key in self._data:
                 sensor_data[key] = self._data[key]
         
-        return self.async_create_entry(title="", data={**self.config_entry.options, **sensor_data})
+        return self._finalize_options({**self.config_entry.options, **sensor_data})
 
     # Device configuration options --------------------------------------------------
     async def async_step_device_configuration(self, user_input: dict[str, Any] | None = None) -> FlowResult:
@@ -3123,7 +3206,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 else:
                     # Create the entry with validated data
                     _LOGGER.info(f"Device configuration updated: {temp_zones} zones validated")
-                    return self.async_create_entry(title="", data=new_options)
+                    return self._finalize_options(new_options)
                 
             except InvalidEntity as err:
                 # Determine which device field had the error
@@ -3235,7 +3318,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 else:
                     # Create the entry with properly preserved options
                     _LOGGER.info(f"Zone {zone_number} configuration updated successfully")
-                    return self.async_create_entry(title="", data=updated_options)
+                    return self._finalize_options(updated_options)
                 
             except InvalidZoneConfig as err:
                 # Provide specific error messages based on validation
